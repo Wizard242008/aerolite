@@ -153,6 +153,18 @@ extension Controller: NSMenuDelegate {
             menu.addItem(.separator())
         }
 
+        let settings = NSMenuItem(title: "Settings…", action: #selector(showSettings), keyEquivalent: ",")
+        settings.target = self
+        settings.image = symbol("gearshape")
+        menu.addItem(settings)
+
+        let help = NSMenuItem(title: "Pulsar Help", action: #selector(showHelp), keyEquivalent: "?")
+        help.target = self
+        help.image = symbol("questionmark.circle")
+        menu.addItem(help)
+
+        menu.addItem(.separator())
+
         let about = NSMenuItem(title: "About Pulsar", action: #selector(showAboutPanel), keyEquivalent: "")
         about.target = self
         about.image = symbol("info.circle")

@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import Carbon.HIToolbox
 
 /// The whole window manager.
 ///
@@ -165,6 +166,8 @@ final class Controller: NSObject {
             return
         }
         if command == "orient" { toggleOrientation(); return }
+        if command == "settings" { showSettings(); return }
+        if command == "help" { showHelp(); return }
         if command == "hoveron" {
             focusFollowsMouse = true
             UserDefaults.standard.set(true, forKey: "focusFollowsMouse")
@@ -274,30 +277,33 @@ final class Controller: NSObject {
 
     // MARK: - hotkeys
 
+    func reRegisterHotkeys() { registerHotkeys() }
+
     private func registerHotkeys() {
+        Hotkeys.shared.unregisterAll()
         let focus: [(Character, Direction)] = [("h", .left), ("l", .right), ("k", .up), ("j", .down)]
         for (c, dir) in focus {
             guard let key = Key.letter(c) else { continue }
-            Hotkeys.shared.register(key, modifiers: Mod.option) { [weak self] in
+            Hotkeys.shared.register(key, modifiers: hotkeyModifier) { [weak self] in
                 self?.focus(dir)
             }
-            Hotkeys.shared.register(key, modifiers: Mod.optionShift) { [weak self] in
+            Hotkeys.shared.register(key, modifiers: hotkeyModifier | UInt32(shiftKey)) { [weak self] in
                 self?.move(dir)
             }
         }
 
-        Hotkeys.shared.register(.minus, modifiers: Mod.option) { [weak self] in self?.resize(grow: false) }
-        Hotkeys.shared.register(.equal, modifiers: Mod.option) { [weak self] in self?.resize(grow: true) }
-        Hotkeys.shared.register(.slash, modifiers: Mod.option) { [weak self] in self?.toggleOrientation() }
+        Hotkeys.shared.register(.minus, modifiers: hotkeyModifier) { [weak self] in self?.resize(grow: false) }
+        Hotkeys.shared.register(.equal, modifiers: hotkeyModifier) { [weak self] in self?.resize(grow: true) }
+        Hotkeys.shared.register(.slash, modifiers: hotkeyModifier) { [weak self] in self?.toggleOrientation() }
 
         // numeric workspaces
         for n in 1...9 {
             guard let key = Key.digit(n) else { continue }
             let name = String(n)
-            Hotkeys.shared.register(key, modifiers: Mod.option) { [weak self] in
+            Hotkeys.shared.register(key, modifiers: hotkeyModifier) { [weak self] in
                 self?.switchWorkspace(name)
             }
-            Hotkeys.shared.register(key, modifiers: Mod.optionShift) { [weak self] in
+            Hotkeys.shared.register(key, modifiers: hotkeyModifier | UInt32(shiftKey)) { [weak self] in
                 self?.moveToWorkspace(name)
             }
         }
@@ -308,10 +314,10 @@ final class Controller: NSObject {
             guard let c = Character(UnicodeScalar(scalar)) as Character?, !"hjkl".contains(c),
                   let key = Key.letter(c) else { continue }
             let name = String(c)
-            Hotkeys.shared.register(key, modifiers: Mod.option) { [weak self] in
+            Hotkeys.shared.register(key, modifiers: hotkeyModifier) { [weak self] in
                 self?.switchWorkspace(name)
             }
-            Hotkeys.shared.register(key, modifiers: Mod.optionShift) { [weak self] in
+            Hotkeys.shared.register(key, modifiers: hotkeyModifier | UInt32(shiftKey)) { [weak self] in
                 self?.moveToWorkspace(name)
             }
         }
@@ -617,6 +623,7 @@ final class Controller: NSObject {
     /// placement stable: most apps here have one window per workspace, so "where this app last
     /// lived" is the right answer when the title no longer matches.
     private func savedWorkspace(for win: Win) -> String? {
+        guard restoreOnLaunch else { return nil }
         let defaults = UserDefaults.standard
         let byTitle = defaults.dictionary(forKey: "windowWorkspaces") as? [String: String]
         if let hit = byTitle?[windowKey(win)] { return hit }
@@ -627,6 +634,7 @@ final class Controller: NSObject {
 
     /// The size the user last gave this window, if any.
     private func savedWeight(for win: Win) -> CGFloat? {
+        guard restoreOnLaunch else { return nil }
         let defaults = UserDefaults.standard
         if let byTitle = defaults.dictionary(forKey: "windowWeights") as? [String: Double],
            let hit = byTitle[windowKey(win)] {
@@ -641,11 +649,16 @@ final class Controller: NSObject {
 
     private func restoreSavedState() {
         let defaults = UserDefaults.standard
-        if let workspace = defaults.string(forKey: "currentWorkspace"), !workspace.isEmpty {
-            store.current = workspace
+        if let restore = defaults.object(forKey: "restoreOnLaunch") as? Bool {
+            restoreOnLaunch = restore
         }
-        if defaults.string(forKey: "orientation") == "v" {
-            store.orientation = .vertical
+        if restoreOnLaunch {
+            if let workspace = defaults.string(forKey: "currentWorkspace"), !workspace.isEmpty {
+                store.current = workspace
+            }
+            if defaults.string(forKey: "orientation") == "v" {
+                store.orientation = .vertical
+            }
         }
         if let follow = defaults.object(forKey: "followAppAcrossWorkspaces") as? Bool {
             followAppAcrossWorkspaces = follow
@@ -950,6 +963,23 @@ final class Controller: NSObject {
     // MARK: - menu bar
 
     var aboutWindow: NSWindow?
+    var settingsWindow: NSWindow?
+    var helpWindow: NSWindow?
+    /// Whether to put windows back where they were on launch.
+    var restoreOnLaunch = true
+
+    /// Modifier used by every shortcut, so the whole scheme can be moved off Option.
+    var hotkeyModifierName: String {
+        UserDefaults.standard.string(forKey: "hotkeyModifier") ?? "option"
+    }
+
+    var hotkeyModifier: UInt32 {
+        switch hotkeyModifierName {
+        case "control": return UInt32(controlKey)
+        case "command": return UInt32(cmdKey)
+        default:        return UInt32(optionKey)
+        }
+    }
 
     private func buildMenuBar() {
         installStatusItem()

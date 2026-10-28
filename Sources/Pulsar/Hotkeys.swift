@@ -30,6 +30,14 @@ final class Hotkeys {
         if status == noErr, let ref { refs.append(ref) }
     }
 
+    /// Unregister everything so the bindings can be rebuilt with a new modifier.
+    func unregisterAll() {
+        for ref in refs { UnregisterEventHotKey(ref) }
+        refs.removeAll()
+        actions.removeAll()
+        nextID = 1
+    }
+
     fileprivate func fire(_ id: UInt32) {
         actions[id]?()
     }
