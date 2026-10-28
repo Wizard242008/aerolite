@@ -85,6 +85,13 @@ keystroke system-wide, which is the usual reason a window manager burns idle CPU
   window you last worked in when the app has several. Toggle it from the menu.
   *Known gap:* macOS sends no activation event when the app is already frontmost, so if you hotkey
   to an empty desktop while an app stays active and then click that same app, nothing happens.
+- **Placement survives restarts — including hard kills.** Placement is written the moment a window
+  changes workspace, not on a timer, and the app saves on SIGTERM/SIGINT/SIGHUP and on quit. A
+  `kill -9` therefore still restores the layout. Restoration tries the exact app+title key first,
+  then falls back to "where this app last lived", because window titles drift constantly (a Slack
+  channel, an unread count, a browser tab) and an exact-key miss used to dump every window onto
+  one workspace. Startup also refuses to write the map until the first discovery pass completes,
+  so a crash during launch can never erase it.
 - **Placement survives restarts.** Each window is remembered by app bundle id + window title, so
   after a relaunch or login it returns to the workspace it was on — the workspace itself, the
   orientation and the current workspace all persist. A renamed window (a new browser tab, an

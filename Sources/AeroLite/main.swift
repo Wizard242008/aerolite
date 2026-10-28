@@ -78,4 +78,18 @@ if !duplicates.isEmpty {
 let controller = Controller()
 controller.start()
 
+// A SIGTERM (logout, launchctl, `kill`) must not cost the arrangement. DispatchSource keeps the
+// handler off the signal context so it is safe to touch UserDefaults here.
+var signalSources: [DispatchSourceSignal] = []
+for sig in [SIGTERM, SIGINT, SIGHUP] {
+    let source = DispatchSource.makeSignalSource(signal: sig, queue: .main)
+    source.setEventHandler {
+        controller.saveState()
+        exit(0)
+    }
+    source.resume()
+    signal(sig, SIG_IGN)
+    signalSources.append(source)
+}
+
 app.run()

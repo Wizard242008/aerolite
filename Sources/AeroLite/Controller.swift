@@ -24,6 +24,8 @@ final class Controller: NSObject {
     private var saveWork: DispatchWorkItem?
     /// When on, activating an app (Dock click, Cmd-Tab) jumps to the workspace holding its window.
     var followAppAcrossWorkspaces = true
+    /// Guards persistence against writing an empty map before the first discovery pass finishes.
+    private var hasCompletedFirstRefresh = false
     var statusItem: NSStatusItem?
     private var enabledItem: NSMenuItem?
     var enabled = true
@@ -63,6 +65,10 @@ final class Controller: NSObject {
         buildMenuBar()
         registerHotkeys()
         observeApps()
+        NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification,
+                                               object: nil, queue: .main) { [weak self] _ in
+            self?.saveState()
+        }
         refresh()
         // Launch is the messiest moment: apps are still placing their windows, so a window can
         // look maximised for a few hundred ms. Re-check a few times, then stop for good.
@@ -360,6 +366,7 @@ final class Controller: NSObject {
 
         parkOtherWorkspaces()
         apply()
+        hasCompletedFirstRefresh = true
         scheduleSave()
 
         let trusted = AXIsProcessTrusted()
@@ -442,9 +449,23 @@ final class Controller: NSObject {
         (win.app.bundleIdentifier ?? "unknown") + "|" + win.title
     }
 
+    private func appKey(_ win: Win) -> String {
+        win.app.bundleIdentifier ?? "unknown"
+    }
+
+    /// Where this window belonged last time.
+    ///
+    /// Window titles drift constantly — a Slack channel, an unread count, a browser tab — so an
+    /// exact key misses more often than it hits. The per-app fallback is what actually keeps
+    /// placement stable: most apps here have one window per workspace, so "where this app last
+    /// lived" is the right answer when the title no longer matches.
     private func savedWorkspace(for win: Win) -> String? {
-        let map = UserDefaults.standard.dictionary(forKey: "windowWorkspaces") as? [String: String]
-        return map?[windowKey(win)]
+        let defaults = UserDefaults.standard
+        let byTitle = defaults.dictionary(forKey: "windowWorkspaces") as? [String: String]
+        if let hit = byTitle?[windowKey(win)] { return hit }
+
+        let byApp = defaults.dictionary(forKey: "appWorkspaces") as? [String: String]
+        return byApp?[appKey(win)]
     }
 
     private func restoreSavedState() {
@@ -468,13 +489,28 @@ final class Controller: NSObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0, execute: work)
     }
 
+    /// Called for changes the user would notice losing: moving a window between workspaces.
+    /// Written straight away, because a crash or a stray duplicate instance must not cost placement.
+    private func saveImmediately() {
+        saveWork?.cancel()
+        saveState()
+    }
+
     func saveState() {
+        // Until the first refresh has finished, `store` is incomplete and writing it would erase
+        // remembered placements — that is exactly how everything ended up back on one workspace.
+        guard hasCompletedFirstRefresh else { return }
+
         var map: [String: String] = [:]
         for (_, win) in store.byHash {
             map[windowKey(win)] = win.workspace
         }
         let defaults = UserDefaults.standard
         defaults.set(map, forKey: "windowWorkspaces")
+        // Mirror the same information per app, for when a title no longer matches.
+        var byApp: [String: String] = [:]
+        for (_, win) in store.byHash { byApp[appKey(win)] = win.workspace }
+        defaults.set(byApp, forKey: "appWorkspaces")
         defaults.set(store.current, forKey: "currentWorkspace")
         defaults.set(store.orientation == .horizontal ? "h" : "v", forKey: "orientation")
     }
@@ -663,7 +699,7 @@ final class Controller: NSObject {
         store.move(win, to: store.current, at: j)
         apply()
         setFocus(win)
-        scheduleSave()
+        saveImmediately()
     }
 
     func resize(grow: Bool) {
@@ -681,7 +717,7 @@ final class Controller: NSObject {
     func switchWorkspace(_ name: String) {
         guard store.current != name else { return }
         store.current = name
-        scheduleSave()
+        saveImmediately()
         apply()
         refresh()
         if let first = store.windows(name).first { setFocus(first) }
@@ -690,7 +726,7 @@ final class Controller: NSObject {
     func moveToWorkspace(_ name: String) {
         guard let win = focused() else { return }
         store.move(win, to: name)
-        scheduleSave()
+        saveImmediately()
         apply()
         if let next = store.windows(store.current).first { setFocus(next) }
     }
