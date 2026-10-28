@@ -2,10 +2,9 @@ import AppKit
 
 // Pulsar — a minimal, event-driven tiling window manager for macOS.
 //
-// Built to replace AeroSpace on machines where AeroSpace's cost is noticeable. The design notes
-// live at the top of Controller.swift; the short version is: no polling, coalesced refreshes,
-// diffed geometry writes, single-display tiling with virtual workspaces, and full-screen windows
-// left strictly alone.
+// Design notes live at the top of Controller.swift; the short version is: no polling, coalesced
+// refreshes, diffed geometry writes, single-display tiling with virtual workspaces, and
+// full-screen windows left strictly alone.
 //
 // Modes:
 //   (none)        run the window manager as a menu-bar agent

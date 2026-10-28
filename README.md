@@ -1,11 +1,29 @@
 # Pulsar
 
-A tiling window manager for macOS. Windows are arranged automatically instead of being dragged
-around, and virtual workspaces keep separate sets of windows on one display.
-
-Built because AeroSpace was slow on an 8 GB Mac. Same idea, less machinery.
+A tiling window manager for macOS, in the spirit of Hyprland: windows are arranged automatically,
+workspaces are switched from the keyboard, and you rarely touch a mouse.
 
 ![icon](docs/icon.png)
+
+## Similar to Hyprland
+
+If you have used Hyprland on Linux, the model is the same:
+
+| | Hyprland | Pulsar |
+|---|---|---|
+| Platform | Linux (Wayland) | macOS (Accessibility APIs) |
+| Tiling | dynamic, dwindle / master | split for two windows, grid for three or more |
+| Workspaces | numbered, per monitor | `1`–`9` plus `a`–`z`, single display |
+| Focus / move keys | `Super` + `h j k l` | `alt` + `h j k l` |
+| Directional move | `Super` + `Shift` + arrow keys | `alt` + `Shift` + `h j k l` |
+| Resize | `Super` + right-drag or binds | `alt-minus` / `alt-equal` |
+| Config file | `hyprland.conf` | none — the keys are fixed |
+| Gaps and borders | configurable | none, panes sit edge to edge |
+
+The differences are mostly macOS's: windows keep their native title bars and traffic lights, there
+are no rounded corners or gaps, and the whole application is a single menu-bar agent rather than a
+compositor. Everything that makes Hyprland feel the way it does — dynamic tiling, workspaces that
+move with you, keyboard-first control — is here.
 
 ## Requirements
 
@@ -77,37 +95,26 @@ window. Turn that off with **Follow App to Its Workspace** in the menu.
   with a per-app fallback for when the title has changed. After a restart or logout, windows return
   to the workspace they were on.
 
-## Why it is faster
+## Why it is efficient
 
-The difference from AeroSpace is mostly about *when* work happens.
+Everything is driven by events rather than by checking the state of the system on a schedule.
 
-| | AeroSpace | Pulsar |
-|---|---|---|
-| Refresh trigger | every left mouse-up, every app activation, plus timers | hotkeys and a few `NSWorkspace` notifications |
-| Mouse-up cost | full session refresh | nothing |
-| Repeated events | one refresh each | coalesced into one, 25 ms later |
-| Geometry writes | every layout pass | only where the frame differs |
-| Keystroke handling | — | Carbon hotkeys, no system-wide event tap |
-| Idle wakeups | polling | 0/s |
-| Idle CPU | — | ~0.03% |
-| Binary | 19.9 MB | ~250 KB |
-
-In more detail:
-
-1. **Nothing runs while you are idle.** No timers, no polling loop, no mouse monitors, no event tap.
-   The process sleeps until a hotkey fires or an app launches, activates, hides or quits.
-2. **A click no longer triggers a layout pass.** AeroSpace performs a full refresh on every left
-   mouse-up: enumerating apps and windows and recomputing geometry while you are just clicking.
-   Pulsar does nothing on mouse-up.
+1. **Nothing runs while you are idle.** There are no timers, no polling loop, no mouse monitors and
+   no keyboard event tap. The process sleeps until one of its hotkeys fires or an app launches,
+   activates, hides or quits.
+2. **Nothing happens on mouse click.** Clicking a window does not trigger a layout pass, because the
+   layout cannot have changed.
 3. **Notifications are coalesced.** Launching an app emits several notifications; they collapse into
    a single refresh 25 ms later instead of several passes.
-4. **Geometry is written only when it differs.** Every Accessibility call is synchronous IPC.
-   Reading the current frame first and skipping the write when it matches removes most of it.
-5. **Hotkeys cost nothing when idle.** Carbon hotkeys live in the window server's hotkey table;
-   a `CGEventTap` runs code on every keystroke system-wide.
+4. **Geometry is written only when it differs.** Every Accessibility call is synchronous IPC, so the
+   current frame is read first and the write is skipped when it already matches.
+5. **Hotkeys cost nothing when idle.** Carbon hotkeys live in the window server's hotkey table; a
+   `CGEventTap` would run code on every keystroke system-wide.
+6. **Layout is arithmetic.** Positions come from dividing a rectangle. There is no scene graph, no
+   animation and no re-entrant layout pass.
 
 Measured on an 8 GB M2 MacBook Pro, 1680×1050 display: 0.0 wakeups/s and ~0.03% CPU while idle,
-~23 MB physical footprint.
+~23 MB physical footprint, ~250 KB on disk.
 
 ## Workspaces
 

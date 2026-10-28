@@ -3,7 +3,7 @@ import ApplicationServices
 
 /// The whole window manager.
 ///
-/// Performance rules this file follows, each one a deliberate difference from AeroSpace:
+/// Performance rules this file follows, each one a deliberate design choice:
 ///
 /// 1. **No work on idle.** No timers, no polling, no mouse monitors. We wake only for hotkeys and
 ///    for app lifecycle notifications the system already broadcasts.
@@ -268,7 +268,7 @@ final class Controller: NSObject {
             }
         }
 
-        // letter workspaces — same idea as AeroSpace's named workspaces.
+        // letter workspaces, alongside the numeric ones.
         // h/j/k/l are excluded: they are focus/move keys.
         for scalar in Character("a").asciiValue!...Character("z").asciiValue! {
             guard let c = Character(UnicodeScalar(scalar)) as Character?, !"hjkl".contains(c),
@@ -402,10 +402,9 @@ final class Controller: NSObject {
             // Park at the BOTTOM-LEFT corner, not far off to the left.
             //
             // The window server clamps a window to keep a sliver on screen: asking for x = -30000
-            // yields x = -(width - ~40), still plainly visible. AeroSpace's trick (hideInCorner) is
-            // to move the window so its top sits 1 pt past the bottom edge and its right edge 1 pt
-            // inside the left edge — the clamp then leaves a single pixel, which is invisible.
-            // Verified by decompiling AppBundle.MacWindow.hideInCorner.
+            // yields x = -(width - ~40), still plainly visible. The way around it is to move the
+            // window so its top sits 1 pt past the bottom edge and its right edge 1 pt inside the
+            // left edge: the clamp then leaves a single pixel, which is invisible.
             let p = CGPoint(x: visible.minX - actual.width + 1, y: visible.maxY - 1)
             AX.setPosition(win.el, p)
 
