@@ -21,6 +21,9 @@ final class Controller: NSObject {
     private var pendingRefresh: DispatchWorkItem?
     private var observers: [NSObjectProtocol] = []
     private var refusalsLogged: Set<CFHashCode> = []
+    /// One Accessibility observer per app, so its windows' comings and goings are seen immediately.
+    private var axObservers: [pid_t: AXObserver] = [:]
+    private var appRefreshWork: [pid_t: DispatchWorkItem] = [:]
     private weak var lastFocused: Win?
     private var saveWork: DispatchWorkItem?
     /// Hyprland-style hover focus. Off by default because it wakes the process on mouse movement.
@@ -28,6 +31,7 @@ final class Controller: NSObject {
     private var mouseMonitor: Any?
     private var hoverWork: DispatchWorkItem?
     private var lastHoverHash: CFHashCode?
+    private var watchWork: DispatchWorkItem?
     /// When on, activating an app (Dock click, Cmd-Tab) jumps to the workspace holding its window.
     var followAppAcrossWorkspaces = true
     /// Guards persistence against writing an empty map before the first discovery pass finishes.
@@ -170,6 +174,23 @@ final class Controller: NSObject {
         }
         if command == "orient" { toggleOrientation(); return }
         if command == "settings" { showSettings(); return }
+        if command == "updateinstall" {
+            Updater.check { result in
+                guard case .available(let release) = result else {
+                    log("updateinstall: nothing available")
+                    return
+                }
+                log("updateinstall: installing \(release.version)")
+                Updater.install(release) { error in
+                    if let error { log("updateinstall failed: \(error)") }
+                    else {
+                        log("updateinstall: handing off to the swap script, quitting")
+                        NSApp.terminate(nil)
+                    }
+                }
+            }
+            return
+        }
         if command == "updatecheck" {
             Updater.check { result in
                 switch result {
@@ -411,6 +432,7 @@ final class Controller: NSObject {
                   app.processIdentifier != getpid() else { continue }
             let pid = app.processIdentifier
             if let only, only != pid { continue }
+            ensureObserver(for: app)
             for el in AX.windows(of: pid) {
                 let hash = CFHash(el)
 
@@ -445,8 +467,16 @@ final class Controller: NSObject {
         for win in discovered {
             store.add(win, to: win.workspace)
         }
-        if only == nil {
+        if let only {
+            store.prune(pid: only, live: live)
+        } else {
             store.prune(live: live)
+
+        // Forget observers whose app is gone.
+        let livePids = Set(NSWorkspace.shared.runningApplications.map(\.processIdentifier))
+        for pid in axObservers.keys where !livePids.contains(pid) {
+            axObservers.removeValue(forKey: pid)
+        }
             // Parking costs a read per window on other workspaces; only worth re-verifying when the
             // window set may actually have changed.
             parkOtherWorkspaces()
@@ -558,6 +588,62 @@ final class Controller: NSObject {
 
         switchWorkspace(window.workspace)
         setFocus(window)
+    }
+
+    // MARK: - watching individual windows
+
+    /// Watch an app's windows directly.
+    ///
+    /// App-level notifications say nothing about a single window closing: without this, closing one
+    /// window of a running app leaves a hole in the layout until some unrelated event triggers a
+    /// refresh. These notifications arrive immediately and cost nothing while idle.
+    private func ensureObserver(for app: NSRunningApplication) {
+        let pid = app.processIdentifier
+        guard axObservers[pid] == nil else { return }
+
+        var observer: AXObserver?
+        let callback: AXObserverCallback = { observer, element, notification, refcon in
+            guard let refcon else { return }
+            let controller = Unmanaged<Controller>.fromOpaque(refcon).takeUnretainedValue()
+            controller.watchFired(observer: observer, element: element,
+                                  notification: notification as String? ?? "")
+        }
+        guard AXObserverCreate(pid, callback, &observer) == .success, let observer else { return }
+
+        let element = AXUIElementCreateApplication(pid)
+        let refcon = Unmanaged.passUnretained(self).toOpaque()
+        let notifications = [
+            kAXWindowCreatedNotification,
+            kAXUIElementDestroyedNotification,
+            kAXWindowMiniaturizedNotification,
+            kAXWindowDeminiaturizedNotification,
+        ]
+        for note in notifications {
+            AXObserverAddNotification(observer, element, note as CFString, refcon)
+        }
+        CFRunLoopAddSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(observer), .defaultMode)
+        axObservers[pid] = observer
+    }
+
+    /// Any observed window event: re-scan everything. Coalesced, because a window closing typically
+    /// emits more than one notification, and title/app changes emit several more.
+    /// A destroyed element only matters if it was a window we were tiling. App-level observers also
+    /// report menus, tooltips and popovers being torn down, and treating those as layout changes is
+    /// what made the app burn 2.5% CPU while sitting idle.
+    private func watchFired(observer: AXObserver, element: AXUIElement, notification: String) {
+        if notification == (kAXUIElementDestroyedNotification as String),
+           store.byHash[CFHash(element)] == nil {
+            return
+        }
+
+        // Only the app that changed needs re-scanning.
+        guard let pid = axObservers.first(where: { $0.value == observer })?.key else { return }
+        appRefreshWork[pid]?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            self?.refresh(app: pid)
+        }
+        appRefreshWork[pid] = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.04, execute: work)
     }
 
     // MARK: - focus follows mouse

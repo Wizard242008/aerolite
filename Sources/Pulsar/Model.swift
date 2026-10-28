@@ -87,6 +87,15 @@ final class Store {
         windows(win.workspace).firstIndex { $0 === win }
     }
 
+    /// Drop one app's windows that no longer exist, leaving every other app untouched.
+    /// Used when the app itself is still running but a single window was closed.
+    func prune(pid: pid_t, live: Set<CFHashCode>) {
+        for (hash, win) in byHash where win.pid == pid && !live.contains(hash) {
+            byHash.removeValue(forKey: hash)
+            workspaces[win.workspace]?.removeAll { $0.hash == hash }
+        }
+    }
+
     /// Drop windows whose process is gone, and keep `current` sane.
     func prune(live: Set<CFHashCode>) {
         for (hash, win) in byHash where !live.contains(hash) {

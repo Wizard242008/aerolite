@@ -64,6 +64,11 @@ hdiutil create -volname "Pulsar" -srcfolder build/dmg -ov -format UDZO -quiet bu
 rm -rf build/dmg
 ls -lh build/Pulsar.dmg | awk '{print "    dmg: " $5}'
 
+if [ "${1:-}" = "--dmg-only" ]; then
+    echo "==> skipping install (--dmg-only); artifact is build/Pulsar.dmg"
+    exit 0
+fi
+
 echo "==> installing (single copy only)"
 pkill -x Pulsar 2>/dev/null || true
 sleep 0.3

@@ -160,7 +160,13 @@ enum Updater {
             rm -rf /Applications/Pulsar.app
             /usr/bin/ditto "\(staged.path)" /Applications/Pulsar.app
             /usr/bin/xattr -dr com.apple.quarantine /Applications/Pulsar.app 2>/dev/null
-            /usr/bin/open /Applications/Pulsar.app
+            # Relaunch through the launch agent when one is installed, so the new process is owned
+            # by launchd and keeps its RunAtLoad semantics; otherwise fall back to LaunchServices.
+            if /bin/launchctl print "gui/$(id -u)/com.devansh.pulsar" >/dev/null 2>&1; then
+                /bin/launchctl kickstart -k "gui/$(id -u)/com.devansh.pulsar"
+            else
+                /usr/bin/open /Applications/Pulsar.app
+            fi
             """
             try? body.write(to: script, atomically: true, encoding: .utf8)
 
