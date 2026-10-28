@@ -80,6 +80,11 @@ keystroke system-wide, which is the usual reason a window manager burns idle CPU
   entirely — never tiled, never parked. Parking full-screen windows is what leaves a user on a
   black screen with no way back. Geometry is used only as a safety check before moving a window
   off-screen, never to decide whether to manage it.
+- **Clicking an app follows it.** Activating an app from the Dock or Cmd-Tab jumps to the workspace
+  holding its window instead of doing nothing because the window is parked off-screen. It uses the
+  window you last worked in when the app has several. Toggle it from the menu.
+  *Known gap:* macOS sends no activation event when the app is already frontmost, so if you hotkey
+  to an empty desktop while an app stays active and then click that same app, nothing happens.
 - **Placement survives restarts.** Each window is remembered by app bundle id + window title, so
   after a relaunch or login it returns to the workspace it was on — the workspace itself, the
   orientation and the current workspace all persist. A renamed window (a new browser tab, an

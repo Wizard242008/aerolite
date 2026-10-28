@@ -122,6 +122,13 @@ extension Controller: NSMenuDelegate {
         enabledItem.image = symbol(enabled ? "checkmark.circle" : "pause.circle")
         menu.addItem(enabledItem)
 
+        let follow = NSMenuItem(title: "Follow App to Its Workspace",
+                                action: #selector(toggleFollow), keyEquivalent: "")
+        follow.target = self
+        follow.state = followAppAcrossWorkspaces ? NSControl.StateValue.on : NSControl.StateValue.off
+        follow.image = symbol("arrow.turn.up.right.diamond")
+        menu.addItem(follow)
+
         let retile = NSMenuItem(title: "Re-tile Now", action: #selector(reloadNow), keyEquivalent: "r")
         retile.target = self
         retile.image = symbol("arrow.triangle.2.circlepath")
@@ -160,6 +167,12 @@ extension Controller: NSMenuDelegate {
     @objc func selectWorkspace(_ sender: NSMenuItem) {
         guard let name = sender.representedObject as? String else { return }
         switchWorkspace(name)
+    }
+
+    @objc func toggleFollow() {
+        followAppAcrossWorkspaces.toggle()
+        UserDefaults.standard.set(followAppAcrossWorkspaces, forKey: "followAppAcrossWorkspaces")
+        rebuildMenu()
     }
 
     @objc func toggleOrientationFromMenu() {

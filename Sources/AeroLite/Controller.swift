@@ -22,6 +22,8 @@ final class Controller: NSObject {
     private var refusalsLogged: Set<CFHashCode> = []
     private weak var lastFocused: Win?
     private var saveWork: DispatchWorkItem?
+    /// When on, activating an app (Dock click, Cmd-Tab) jumps to the workspace holding its window.
+    var followAppAcrossWorkspaces = true
     var statusItem: NSStatusItem?
     private var enabledItem: NSMenuItem?
     var enabled = true
@@ -280,8 +282,13 @@ final class Controller: NSObject {
             NSWorkspace.activeSpaceDidChangeNotification,
         ]
         for name in names {
-            let token = nc.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                self?.scheduleRefresh()
+            let token = nc.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
+                guard let self else { return }
+                if name == NSWorkspace.didActivateApplicationNotification,
+                   let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication {
+                    self.followActivation(app)
+                }
+                self.scheduleRefresh()
             }
             observers.append(token)
         }
@@ -391,6 +398,38 @@ final class Controller: NSObject {
         }
     }
 
+    // MARK: - following the app you just clicked
+
+    /// Jump to the workspace that holds the activated app's window.
+    ///
+    /// This is what makes the Dock and Cmd-Tab behave: clicking an app that lives on another
+    /// desktop takes you there instead of doing nothing because its window is parked off-screen.
+    /// It deliberately does nothing when the app is already on the current workspace, which also
+    /// stops it from fighting a workspace switch the user just made with a hotkey.
+    private func followActivation(_ app: NSRunningApplication) {
+        log("activation: \(app.localizedName ?? "?") enabled=\(enabled) follow=\(followAppAcrossWorkspaces)")
+        guard enabled, followAppAcrossWorkspaces else { return }
+        guard app.processIdentifier != getpid() else { return }
+
+        let appWindows = store.byHash.values.filter { $0.pid == app.processIdentifier }
+        log("  app windows: \(appWindows.map { "\($0.workspace)" }.joined(separator: ",")) current=\(store.current)")
+        guard !appWindows.isEmpty else { return }        // freshly launched: nothing to follow yet
+
+        // Prefer the window the user last worked in, so a multi-window app lands where they left it.
+        let target: Win?
+        if let last = lastFocused, last.pid == app.processIdentifier,
+           appWindows.contains(where: { $0 === last }) {
+            target = last
+        } else {
+            target = appWindows.first
+        }
+        guard let window = target else { return }
+        guard window.workspace != store.current else { return }
+
+        switchWorkspace(window.workspace)
+        setFocus(window)
+    }
+
     // MARK: - persistence
 
     /// Stable-enough identity for remembering where a window belongs across launches.
@@ -415,6 +454,9 @@ final class Controller: NSObject {
         }
         if defaults.string(forKey: "orientation") == "v" {
             store.orientation = .vertical
+        }
+        if let follow = defaults.object(forKey: "followAppAcrossWorkspaces") as? Bool {
+            followAppAcrossWorkspaces = follow
         }
     }
 
@@ -698,6 +740,12 @@ func log(_ message: String) {
 
     let url = URL(fileURLWithPath: NSHomeDirectory() + "/Library/Logs/AeroLite.log")
     let data = line.data(using: .utf8)!
+
+    // Keep the log bounded; it now records app activations, so it would otherwise grow forever.
+    if let size = try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int,
+       size > 512 * 1024 {
+        try? FileManager.default.removeItem(at: url)
+    }
     if let handle = try? FileHandle(forWritingTo: url) {
         handle.seekToEndOfFile()
         handle.write(data)
