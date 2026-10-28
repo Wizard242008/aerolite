@@ -80,6 +80,12 @@ keystroke system-wide, which is the usual reason a window manager burns idle CPU
   entirely — never tiled, never parked. Parking full-screen windows is what leaves a user on a
   black screen with no way back. Geometry is used only as a safety check before moving a window
   off-screen, never to decide whether to manage it.
+- **The size you set sticks.** Dragging a divider is adopted as the layout ratio instead of being
+  undone at the next refresh, and sizes are persisted per window so they survive a restart. Weights
+  are re-derived from the achieved frames after every pass, so a window pinned at its minimum
+  cannot leave a weight inflated and make a later resize look broken. Resizing still yields to an
+  app's minimum size: asking for a wider pane than the neighbour allows stops at that neighbour's
+  floor rather than overlapping it.
 - **Clicking an app follows it.** Activating an app from the Dock or Cmd-Tab jumps to the workspace
   holding its window instead of doing nothing because the window is parked off-screen. It uses the
   window you last worked in when the app has several. Toggle it from the menu.

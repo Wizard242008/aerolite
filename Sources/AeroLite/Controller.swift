@@ -150,6 +150,16 @@ final class Controller: NSObject {
     }
 
     func runDebugCommand(_ command: String) {
+        // Single-word commands never reach the verb-argument split below.
+        if command == "drag" {
+            guard let win = focused(), let f = AX.currentFrame(win.el) else { return }
+            let newWidth = max(f.width * 1.45, 200)
+            AX.setSize(win.el, CGSize(width: newWidth, height: f.height))
+            log("drag: forced width \(Int(f.width)) -> \(Int(newWidth)), cached frame left stale")
+            return
+        }
+        if command == "orient" { toggleOrientation(); return }
+
         let parts = command.split(separator: "-", maxSplits: 1).map(String.init)
         guard parts.count == 2 else {
             if command == "orient" { toggleOrientation() }
@@ -354,6 +364,7 @@ final class Controller: NSObject {
                     // Put the window back where it was last time, not blindly on the current
                     // workspace. This is what makes a restart feel like nothing moved.
                     if let remembered = savedWorkspace(for: win) { win.workspace = remembered }
+                    if let weight = savedWeight(for: win) { win.weight = weight }
                     discovered.append(win)
                 }
             }
@@ -403,6 +414,44 @@ final class Controller: NSObject {
                     + "\(Int(after.width))x\(Int(after.height))")
             }
         }
+    }
+
+    /// Re-derive every weight in the workspace from the sizes the windows actually have.
+    ///
+    /// This is what makes a manual resize stick. A tiling WM normally recomputes geometry from
+    /// weights on every pass, so a divider drag is undone at the next refresh — which feels like
+    /// the app "randomly" resetting the split. By folding the current widths back into the weights
+    /// before laying out, the ratio the user chose becomes the ratio the layout reproduces.
+    ///
+    /// Normalising all windows together (rather than scaling the one that moved) keeps the ratio
+    /// exact and prevents drift across repeated drags.
+    private func adoptExternalSizes(_ wins: [Win]) {
+        guard wins.count > 1 else { return }
+
+        var externallyResized = false
+        var widths: [CGFloat] = []
+        for win in wins {
+            guard let actual = AX.currentFrame(win.el) else { widths.append(win.frame.width); continue }
+            let widthDelta = abs(actual.width - win.frame.width)
+            let heightSame = abs(actual.height - win.frame.height) < 2
+            if heightSame && widthDelta > 4 {
+                // A window refusing to shrink to its cell is reporting its minimum, not asking to
+                // be bigger; that is recorded separately and must not skew the weights.
+                let isKnownClamp = actual.width > win.frame.width
+                    && (store.minWidth[win.hash].map { abs(actual.width - $0) < 2 } ?? false)
+                if !isKnownClamp { externallyResized = true }
+            }
+            widths.append(actual.width)
+        }
+        guard externallyResized else { return }
+
+        let smallest = widths.min() ?? 1
+        guard smallest > 1 else { return }
+        for (win, width) in zip(wins, widths) {
+            win.weight = min(max(width / smallest, 0.2), 12)
+        }
+        log("adopted manual sizes: " + wins.map { "\(Int($0.weight * 100))" }.joined(separator: "/"))
+        saveImmediately()
     }
 
     // MARK: - following the app you just clicked
@@ -468,6 +517,20 @@ final class Controller: NSObject {
         return byApp?[appKey(win)]
     }
 
+    /// The size the user last gave this window, if any.
+    private func savedWeight(for win: Win) -> CGFloat? {
+        let defaults = UserDefaults.standard
+        if let byTitle = defaults.dictionary(forKey: "windowWeights") as? [String: Double],
+           let hit = byTitle[windowKey(win)] {
+            return CGFloat(hit)
+        }
+        if let byApp = defaults.dictionary(forKey: "appWeights") as? [String: Double],
+           let hit = byApp[appKey(win)] {
+            return CGFloat(hit)
+        }
+        return nil
+    }
+
     private func restoreSavedState() {
         let defaults = UserDefaults.standard
         if let workspace = defaults.string(forKey: "currentWorkspace"), !workspace.isEmpty {
@@ -511,6 +574,16 @@ final class Controller: NSObject {
         var byApp: [String: String] = [:]
         for (_, win) in store.byHash { byApp[appKey(win)] = win.workspace }
         defaults.set(byApp, forKey: "appWorkspaces")
+
+        // Sizes are remembered too, or a restart would silently restore the even split.
+        var weights: [String: Double] = [:]
+        var appWeights: [String: Double] = [:]
+        for (_, win) in store.byHash {
+            weights[windowKey(win)] = Double(win.weight)
+            appWeights[appKey(win)] = Double(win.weight)
+        }
+        defaults.set(weights, forKey: "windowWeights")
+        defaults.set(appWeights, forKey: "appWeights")
         defaults.set(store.current, forKey: "currentWorkspace")
         defaults.set(store.orientation == .horizontal ? "h" : "v", forKey: "orientation")
     }
@@ -565,6 +638,8 @@ final class Controller: NSObject {
         // 3+: a grid. Slicing one row thin enough for 7 windows drops panes below the minimum
         // width apps accept, and a window that cannot shrink overruns its cell into its neighbour.
         // The grid keeps panes usable and still partitions the screen exactly.
+        adoptExternalSizes(current)
+
         let minWidths = current.map { store.minWidth[$0.hash] ?? 1 }
         let minHeights = current.map { store.minHeight[$0.hash] ?? 1 }
 
@@ -633,6 +708,20 @@ final class Controller: NSObject {
                 log("refused geometry: \(app) wanted \(Int(frame.width))x\(Int(frame.height)) "
                     + "at \(Int(frame.minX)),\(Int(frame.minY)) "
                     + "got \(Int(after.width))x\(Int(after.height)) at \(Int(after.minX)),\(Int(after.minY))")
+            }
+        }
+
+        // Keep weights honest: restate them in terms of the sizes the layout actually produced.
+        // A window clamped to its minimum leaves its weight inflated, and then the next shrink
+        // command appears to do nothing — the weight moves but the split cannot. Re-deriving from
+        // the achieved frames keeps one weight unit equal to one "smallest pane" and makes every
+        // subsequent adjustment visible.
+        if current.count > 1, store.orientation == .horizontal {
+            let widths = frames.map(\.width)
+            if let smallest = widths.min(), smallest > 1, widths.count == current.count {
+                for (win, width) in zip(current, widths) {
+                    win.weight = min(max(width / smallest, 0.2), 12)
+                }
             }
         }
 
