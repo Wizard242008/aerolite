@@ -60,74 +60,52 @@ func drawIcon(in size: CGFloat) -> NSBitmapImageRep {
         NSColor(srgbRed: 0.09, green: 0.12, blue: 0.24, alpha: 1),
     ])!.draw(in: squircle, angle: -90)
 
-    // Soft inner rim: keeps the tile distinguishable on a dark wallpaper without a hard outline.
-    NSColor(white: 1, alpha: 0.07).setStroke()
-    squircle.lineWidth = max(size * 0.006, 0.5)
-    squircle.stroke()
-
     let centre = NSPoint(x: body.midX, y: body.midY)
     let beamLength = body.width * 0.55
     let halfAngle = CGFloat.pi / 30        // narrow cone: a beam, not a spotlight
     let axis = CGFloat.pi / 4              // two beams on one diagonal
 
-    // Beams and pulse rings are drawn into a separate layer and blurred, then composited under a
-    // sharp core. That is what makes them read as light rather than opaque wedges.
-    if let layer = blurredLayer(size: size, radius: size * 0.022, draw: { layerCtx, _ in
-        let beamLength = body.width * 0.55
-        let halfAngle = CGFloat.pi / 28
-        let axis = CGFloat.pi / 4
-
-        for direction in [axis, axis + .pi] {
-            let cone = NSBezierPath()
-            cone.move(to: centre)
-            cone.line(to: NSPoint(x: centre.x + cos(direction - halfAngle) * beamLength,
-                                  y: centre.y + sin(direction - halfAngle) * beamLength))
-            cone.line(to: NSPoint(x: centre.x + cos(direction + halfAngle) * beamLength,
-                                  y: centre.y + sin(direction + halfAngle) * beamLength))
-            cone.close()
-            layerCtx.saveGState()
-            cone.addClip()
-            NSGradient(colorsAndLocations:
-                (NSColor(srgbRed: 0.80, green: 0.94, blue: 1.0, alpha: 0.95), 0.0),
-                (NSColor(srgbRed: 0.45, green: 0.72, blue: 1.0, alpha: 0.38), 0.24),
-                (NSColor(srgbRed: 0.28, green: 0.48, blue: 1.0, alpha: 0.0), 0.70),
-            )!.draw(in: NSRect(x: centre.x - beamLength, y: centre.y - beamLength,
-                               width: beamLength * 2, height: beamLength * 2),
-                    relativeCenterPosition: .zero)
-            layerCtx.restoreGState()
+    // The mark is the same four-point star as the menu-bar glyph, so the Dock icon and the menu
+    // bar read as one product. Same geometry: four long points, four short, inner radius 30%.
+    func starPath(radius outer: CGFloat) -> NSBezierPath {
+        let inner = outer * 0.30
+        let path = NSBezierPath()
+        for step in 0..<8 {
+            let angle = CGFloat(step) * .pi / 4 + .pi / 2        // first point straight up
+            let r = step.isMultiple(of: 2) ? outer : inner
+            let point = NSPoint(x: centre.x + cos(angle) * r, y: centre.y + sin(angle) * r)
+            step == 0 ? path.move(to: point) : path.line(to: point)
         }
+        path.close()
+        return path
+    }
 
-        if size >= 128 {
-            for (ringRadius, alpha) in [(body.width * 0.29, CGFloat(0.26)), (body.width * 0.39, CGFloat(0.13))] {
-                let ring = NSBezierPath(ovalIn: NSRect(x: centre.x - ringRadius, y: centre.y - ringRadius,
-                                                       width: ringRadius * 2, height: ringRadius * 2))
-                ring.lineWidth = max(size * 0.006, 0.5)
-                NSColor(srgbRed: 0.58, green: 0.82, blue: 1.0, alpha: alpha).setStroke()
-                ring.stroke()
-            }
-        }
+    let outer = body.width * 0.34
+    let star = starPath(radius: outer)
+
+    // A soft bloom behind the star does the work a flat fill cannot: it separates the mark from the
+    // background and gives it the glow the menu-bar version gets for free from the system tint.
+    if let bloom = blurredLayer(size: size, radius: size * 0.042, draw: { layerCtx, _ in
+        NSColor(srgbRed: 0.55, green: 0.80, blue: 1.0, alpha: 0.85).setFill()
+        starPath(radius: outer * 1.02).fill()
     }) {
-        layer.draw(in: NSRect(x: 0, y: 0, width: size, height: size),
+        bloom.draw(in: NSRect(x: 0, y: 0, width: size, height: size),
                    from: NSRect(x: 0, y: 0, width: size, height: size),
-                   operation: .plusLighter, fraction: 1.0,
+                   operation: .plusLighter, fraction: 0.70,
                    respectFlipped: false, hints: nil)
     }
 
-    // The star: small bright core with a tight glow.
-    let coreRadius = body.width * 0.10
-    let glowRadius = coreRadius * 2.8
+    // The star itself: white at the core, cooling to blue at the points.
+    NSGraphicsContext.saveGraphicsState()
+    star.addClip()
     NSGradient(colorsAndLocations:
-        (NSColor(srgbRed: 0.95, green: 0.97, blue: 1.0, alpha: 0.98), 0.0),
-        (NSColor(srgbRed: 0.62, green: 0.66, blue: 1.0, alpha: 0.42), 0.22),
-        (NSColor(srgbRed: 0.35, green: 0.66, blue: 1.0, alpha: 0.28), 0.45),
-        (NSColor(srgbRed: 0.20, green: 0.40, blue: 0.90, alpha: 0.0), 1.0),
-    )!.draw(in: NSBezierPath(ovalIn: NSRect(x: centre.x - glowRadius, y: centre.y - glowRadius,
-                                            width: glowRadius * 2, height: glowRadius * 2)),
+        (NSColor.white, 0.0),
+        (NSColor(srgbRed: 0.80, green: 0.92, blue: 1.0, alpha: 1.0), 0.45),
+        (NSColor(srgbRed: 0.45, green: 0.75, blue: 1.0, alpha: 1.0), 1.0),
+    )!.draw(in: NSRect(x: centre.x - outer, y: centre.y - outer,
+                       width: outer * 2, height: outer * 2),
             relativeCenterPosition: .zero)
-
-    NSColor.white.setFill()
-    NSBezierPath(ovalIn: NSRect(x: centre.x - coreRadius, y: centre.y - coreRadius,
-                                width: coreRadius * 2, height: coreRadius * 2)).fill()
+    NSGraphicsContext.restoreGraphicsState()
 
     NSGraphicsContext.restoreGraphicsState()
     return rep
