@@ -11,6 +11,22 @@ import CoreGraphics
 //   wmpeek --check    tiling summary + overlap detection
 
 let args = CommandLine.arguments
+
+// --ids <owner>: print CGWindowIDs for an owner, so a specific window can be screenshotted with
+// `screencapture -l <id>` even when it is not frontmost.
+if let flag = args.firstIndex(of: "--ids"), args.count > flag + 1 {
+    let owner = args[flag + 1]
+    let list = (CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]]) ?? []
+    for w in list {
+        guard let name = w[kCGWindowOwnerName as String] as? String, name == owner,
+              let number = w[kCGWindowNumber as String] as? Int,
+              let bounds = w[kCGWindowBounds as String] as? [String: Any],
+              let width = bounds["Width"] as? CGFloat, width > 100 else { continue }
+        let title = w[kCGWindowName as String] as? String ?? ""
+        print("\(number)\t\(title)\t\(Int(width))")
+    }
+    exit(0)
+}
 let parkedMode = args.contains("--parked")
 let checkMode = args.contains("--check")
 

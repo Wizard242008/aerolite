@@ -16,52 +16,82 @@ extension Controller {
             return
         }
 
-        let width: CGFloat = 440
+        let width: CGFloat = 460
+        let margin: CGFloat = 20
         let stack = NSStackView()
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = 10
-        stack.edgeInsets = NSEdgeInsets(top: 20, left: 22, bottom: 20, right: 22)
+        stack.spacing = 0
+        stack.edgeInsets = NSEdgeInsets(top: 18, left: 0, bottom: 18, right: 0)
+
+        // Every row is pinned to the same left and right margins by hand. Relying on the stack's
+        // alignment to do it produced rows at three different left edges.
+        @discardableResult
+        func add(_ view: NSView, spacingAfter: CGFloat) -> NSView {
+            stack.addArrangedSubview(view)
+            view.translatesAutoresizingMaskIntoConstraints = false
+            NSLayoutConstraint.activate([
+                view.leadingAnchor.constraint(equalTo: stack.leadingAnchor, constant: margin),
+                view.trailingAnchor.constraint(equalTo: stack.trailingAnchor, constant: -margin),
+            ])
+            stack.setCustomSpacing(spacingAfter, after: view)
+            return view
+        }
         stack.translatesAutoresizingMaskIntoConstraints = false
 
-        func heading(_ text: String) -> NSTextField {
+        func heading(_ text: String) -> NSView {
             let label = NSTextField(labelWithString: text)
-            label.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
+            label.font = .systemFont(ofSize: 11, weight: .semibold)
             label.textColor = .secondaryLabelColor
             return label
         }
 
-        func checkbox(_ title: String, on: Bool, action: Selector) -> NSButton {
-            let button = NSButton(checkboxWithTitle: title, target: self, action: action)
-            button.state = on ? .on : .off
-            return button
+        /// A checkbox with its explanation indented to the label, not to the checkbox box.
+        func option(_ title: String, on: Bool, action: Selector, note: String) -> NSView {
+            let container = NSView()
+            let box = NSButton(checkboxWithTitle: title, target: self, action: action)
+            box.state = on ? .on : .off
+            let detail = NSTextField(wrappingLabelWithString: note)
+            detail.font = .systemFont(ofSize: 11)
+            detail.textColor = .secondaryLabelColor
+            detail.preferredMaxLayoutWidth = width - margin * 2 - 20
+
+            for view in [box, detail] as [NSView] {
+                view.translatesAutoresizingMaskIntoConstraints = false
+                container.addSubview(view)
+            }
+            NSLayoutConstraint.activate([
+                box.topAnchor.constraint(equalTo: container.topAnchor),
+                box.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+                box.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor),
+                detail.topAnchor.constraint(equalTo: box.bottomAnchor, constant: 2),
+                detail.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 20),
+                detail.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+                detail.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            ])
+            return container
         }
 
-        func note(_ text: String) -> NSTextField {
-            let label = NSTextField(wrappingLabelWithString: text)
-            label.font = NSFont.systemFont(ofSize: 11)
-            label.textColor = .tertiaryLabelColor
-            label.preferredMaxLayoutWidth = width - 44
-            return label
-        }
+        add(heading("BEHAVIOUR"), spacingAfter: 6)
 
-        stack.addArrangedSubview(heading("BEHAVIOUR"))
-        stack.addArrangedSubview(checkbox("Follow an app to its workspace", on: followAppAcrossWorkspaces,
-                                          action: #selector(settingsToggleFollow)))
-        stack.addArrangedSubview(note("Clicking an app in the Dock or via Cmd-Tab jumps to the workspace holding its window."))
-        stack.addArrangedSubview(checkbox("Focus follows mouse", on: focusFollowsMouse,
-                                          action: #selector(settingsToggleHover)))
-        stack.addArrangedSubview(note("Moving the pointer over a window focuses it. Costs nothing while the mouse is still; every focus change costs about 10 ms."))
-        stack.addArrangedSubview(checkbox("Restore my layout at launch", on: restoreOnLaunch,
-                                          action: #selector(settingsToggleRestore)))
-        stack.addArrangedSubview(note("Puts windows back on the workspaces they were on, and reopens the workspace you were using."))
+        let follow = option("Follow an app to its workspace", on: followAppAcrossWorkspaces,
+                            action: #selector(settingsToggleFollow),
+                            note: "Clicking an app in the Dock, or reaching it with Cmd-Tab, jumps to the workspace holding its window.")
+        add(follow, spacingAfter: 10)
 
-        stack.setCustomSpacing(18, after: stack.arrangedSubviews.last!)
+        let hover = option("Focus follows mouse", on: focusFollowsMouse,
+                           action: #selector(settingsToggleHover),
+                           note: "Moving the pointer over a window focuses it. Costs nothing while the mouse is still; each focus change costs about 10 ms.")
+        add(hover, spacingAfter: 10)
 
-        stack.addArrangedSubview(heading("KEYS"))
-        let modifierRow = NSStackView()
-        modifierRow.orientation = .horizontal
-        modifierRow.spacing = 8
+        let restore = option("Restore my layout at launch", on: restoreOnLaunch,
+                             action: #selector(settingsToggleRestore),
+                             note: "Puts windows back on their workspaces and reopens the workspace you were using.")
+        add(restore, spacingAfter: 20)
+
+        add(heading("KEYS"), spacingAfter: 8)
+
+        let modifierRow = NSView()
         let modifierLabel = NSTextField(labelWithString: "Modifier for all shortcuts")
         let popup = NSPopUpButton(frame: .zero, pullsDown: false)
         popup.addItems(withTitles: ["Option ⌥", "Control ⌃", "Command ⌘"])
@@ -72,31 +102,59 @@ extension Controller {
         }
         popup.target = self
         popup.action = #selector(settingsModifierChanged(_:))
-        modifierRow.addArrangedSubview(modifierLabel)
-        modifierRow.addArrangedSubview(popup)
-        stack.addArrangedSubview(modifierRow)
-        stack.addArrangedSubview(note("Applies to focus, move, resize, layout and workspace shortcuts. Shift is added for the “move” variants."))
+        for view in [modifierLabel, popup] as [NSView] {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            modifierRow.addSubview(view)
+        }
+        NSLayoutConstraint.activate([
+            modifierLabel.leadingAnchor.constraint(equalTo: modifierRow.leadingAnchor),
+            modifierLabel.centerYAnchor.constraint(equalTo: modifierRow.centerYAnchor),
+            popup.trailingAnchor.constraint(equalTo: modifierRow.trailingAnchor),
+            popup.topAnchor.constraint(equalTo: modifierRow.topAnchor),
+            popup.bottomAnchor.constraint(equalTo: modifierRow.bottomAnchor),
+            popup.leadingAnchor.constraint(greaterThanOrEqualTo: modifierLabel.trailingAnchor, constant: 12),
+        ])
+        add(modifierRow, spacingAfter: 4)
 
-        stack.setCustomSpacing(18, after: stack.arrangedSubviews.last!)
+        let modifierNote = NSTextField(wrappingLabelWithString:
+            "Applies to focus, move, resize, layout and workspace shortcuts. Shift is added for the “move” variants.")
+        modifierNote.font = .systemFont(ofSize: 11)
+        modifierNote.textColor = .secondaryLabelColor
+        modifierNote.preferredMaxLayoutWidth = width - margin * 2 - 20
+        add(modifierNote, spacingAfter: 20)
 
-        stack.addArrangedSubview(heading("ACTIONS"))
+        add(heading("ACTIONS"), spacingAfter: 8)
+
         let buttons = NSStackView()
         buttons.orientation = .horizontal
         buttons.spacing = 8
-        for (title, action) in [("Re-tile Now", #selector(settingsRetile)),
-                                ("Grant Accessibility…", #selector(openAccessibility)),
-                                ("Check for Updates", #selector(settingsCheckForUpdates)),
-                                ("Show Log", #selector(settingsShowLog))] {
+        buttons.alignment = .centerY
+        // The Accessibility button only belongs here when the permission is actually missing; four
+        // buttons do not fit the window and the first one was being truncated to an ellipsis.
+        var actions: [(String, Selector)] = [("Re-tile Now", #selector(settingsRetile))]
+        if !AXIsProcessTrusted() {
+            actions.append(("Grant Accessibility…", #selector(openAccessibility)))
+        }
+        actions.append(("Check for Updates…", #selector(settingsCheckForUpdates)))
+        actions.append(("Show Log", #selector(settingsShowLog)))
+
+        for (title, action) in actions {
             let button = NSButton(title: title, target: self, action: action)
             button.bezelStyle = .rounded
+            button.setContentHuggingPriority(.required, for: .horizontal)
+            button.setContentCompressionResistancePriority(.required, for: .horizontal)
             buttons.addArrangedSubview(button)
         }
-        stack.addArrangedSubview(buttons)
+        add(buttons, spacingAfter: 14)
 
-        let footer = note("Changes apply immediately and are stored in ~/Library/Preferences/com.devansh.pulsar.plist.")
-        stack.addArrangedSubview(footer)
+        let footer = NSTextField(wrappingLabelWithString:
+            "Changes apply immediately and are stored in com.devansh.pulsar.plist.")
+        footer.font = .systemFont(ofSize: 11)
+        footer.textColor = .tertiaryLabelColor
+        footer.preferredMaxLayoutWidth = width - margin * 2
+        add(footer, spacingAfter: 0)
 
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 460),
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 420),
                               styleMask: [.titled, .closable],
                               backing: .buffered, defer: false)
         window.title = "Pulsar Settings"
@@ -106,8 +164,11 @@ extension Controller {
             stack.leadingAnchor.constraint(equalTo: window.contentView!.leadingAnchor),
             stack.trailingAnchor.constraint(equalTo: window.contentView!.trailingAnchor),
             stack.topAnchor.constraint(equalTo: window.contentView!.topAnchor),
+            stack.bottomAnchor.constraint(equalTo: window.contentView!.bottomAnchor),
         ])
-        window.setContentSize(stack.fittingSize)
+        // Fix the width rather than letting the widest row decide it.
+        stack.widthAnchor.constraint(equalToConstant: width).isActive = true
+        window.setContentSize(NSSize(width: width, height: stack.fittingSize.height))
         window.center()
 
         settingsWindow = window
@@ -215,7 +276,7 @@ extension Controller {
             return
         }
 
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 660, height: 640),
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 720, height: 660),
                               styleMask: [.titled, .closable, .resizable],
                               backing: .buffered, defer: false)
         window.title = "Pulsar Help"
@@ -226,11 +287,11 @@ extension Controller {
         let storage = NSTextStorage()
         let layout = NSLayoutManager()
         storage.addLayoutManager(layout)
-        let container = NSTextContainer(size: NSSize(width: 620, height: CGFloat.greatestFiniteMagnitude))
+        let container = NSTextContainer(size: NSSize(width: 680, height: CGFloat.greatestFiniteMagnitude))
         container.widthTracksTextView = true
         layout.addTextContainer(container)
 
-        let textView = NSTextView(frame: NSRect(x: 0, y: 0, width: 620, height: 600),
+        let textView = NSTextView(frame: NSRect(x: 0, y: 0, width: 680, height: 620),
                                   textContainer: container)
         textView.isEditable = false
         textView.isSelectable = true
@@ -339,8 +400,15 @@ extension Controller {
 
         // Collect lines first: tables need a pass to size their columns.
         // The README carries a little HTML for its GitHub header; strip the tags, keep the text.
-        let sanitised = markdown.replacingOccurrences(of: "<[^>]+>", with: "",
+        var prepared = markdown
+        for (pattern, replacement) in [("<h1[^>]*>", "# "), ("</h1>", ""),
+                                       ("<h2[^>]*>", "## "), ("</h2>", ""),
+                                       ("<br\\s*/?>", "\n")] {
+            prepared = prepared.replacingOccurrences(of: pattern, with: replacement,
                                                      options: .regularExpression)
+        }
+        let sanitised = prepared.replacingOccurrences(of: "<[^>]+>", with: "",
+                                                      options: .regularExpression)
         let lines = sanitised.components(separatedBy: .newlines)
         var index = 0
         var inCode = false
@@ -367,9 +435,12 @@ extension Controller {
             if line.hasPrefix("|") {
                 var rows: [[String]] = []
                 while index < lines.count, lines[index].hasPrefix("|") {
-                    let cells = lines[index].split(separator: "|", omittingEmptySubsequences: false)
+                    var cells = lines[index].split(separator: "|", omittingEmptySubsequences: false)
                         .map { $0.trimmingCharacters(in: .whitespaces) }
-                        .filter { !$0.isEmpty }
+                    // The leading and trailing entries are the delimiters; interior empties are
+                    // real cells (an unlabelled first column), so they must be kept.
+                    if cells.first?.isEmpty == true { cells.removeFirst() }
+                    if cells.last?.isEmpty == true { cells.removeLast() }
                     if !cells.allSatisfy({ $0.allSatisfy { $0 == "-" || $0 == ":" } }) {
                         rows.append(cells)
                     }
@@ -384,15 +455,15 @@ extension Controller {
                 }
                 for (rowIndex, row) in rows.enumerated() {
                     let font = rowIndex == 0
-                        ? NSFont.monospacedSystemFont(ofSize: 11, weight: .semibold)
-                        : NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+                        ? NSFont.monospacedSystemFont(ofSize: 10.5, weight: .semibold)
+                        : NSFont.monospacedSystemFont(ofSize: 10.5, weight: .regular)
                     let color: NSColor = rowIndex == 0 ? .labelColor : .secondaryLabelColor
 
                     let line = NSMutableAttributedString()
                     for column in 0..<columnCount {
                         let cell = column < row.count ? row[column] : ""
                         line.append(inline(cell, font: font, color: color))
-                        let padding = max(0, widths[column] - visibleLength(cell)) + (column < columnCount - 1 ? 3 : 0)
+                        let padding = max(0, widths[column] - visibleLength(cell)) + (column < columnCount - 1 ? 2 : 0)
                         line.append(NSAttributedString(string: String(repeating: " ", count: padding),
                                                        attributes: [.font: font]))
                     }

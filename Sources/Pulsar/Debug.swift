@@ -81,6 +81,13 @@ extension Controller {
         }
         if command == "orient" { toggleOrientation(); return }
         if command == "settings" { showSettings(); return }
+        if command == "about" { showAboutPanel(); return }
+        if command == "menu" {
+            // Opens the status-item menu for screenshots. Enters menu tracking, so this call does
+            // not return until the menu is dismissed.
+            statusItem?.button?.performClick(nil)
+            return
+        }
         if command == "updateinstall" {
             Updater.check { result in
                 guard case .available(let release) = result else {

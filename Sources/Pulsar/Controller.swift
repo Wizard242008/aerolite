@@ -24,6 +24,10 @@ final class Controller: NSObject {
     /// One Accessibility observer per app, so its windows' comings and goings are seen immediately.
     private var axObservers: [pid_t: AXObserver] = [:]
     private var appRefreshWork: [pid_t: DispatchWorkItem] = [:]
+    /// Consecutive full scans that failed to find a tracked window. A window is dropped only after
+    /// two, because a Space transition makes every Accessibility query come back empty for a
+    /// moment — and treating that as "all windows closed" wiped the entire layout.
+    var missedScans: [CFHashCode: Int] = [:]
     private weak var lastFocused: Win?
     var saveWork: DispatchWorkItem?
     /// Hyprland-style hover focus. Off by default because it wakes the process on mouse movement.
@@ -200,6 +204,11 @@ final class Controller: NSObject {
                 if name == NSWorkspace.didActivateApplicationNotification,
                    let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication {
                     self.refresh(app: app.processIdentifier)
+                } else if name == NSWorkspace.activeSpaceDidChangeNotification {
+                    // Scanning mid-transition returns empty window lists; wait for the animation.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+                        self?.refresh()
+                    }
                 } else {
                     self.scheduleRefresh()
                 }
@@ -287,9 +296,9 @@ final class Controller: NSObject {
             store.add(win, to: win.workspace)
         }
         if let only {
-            store.prune(pid: only, live: live)
+            pruneResilient(live: live, pid: only)
         } else {
-            store.prune(live: live)
+            pruneResilient(live: live, pid: nil)
 
         // Forget observers whose app is gone.
         let livePids = Set(NSWorkspace.shared.runningApplications.map(\.processIdentifier))
@@ -313,6 +322,33 @@ final class Controller: NSObject {
     /// Re-checked on each refresh rather than remembered, because apps routinely restore their own
     /// saved frame when reactivated — a one-shot park leaves last desktop's windows sitting on top
     /// of this one.
+    /// Drop windows that are really gone — but not the ones a scan merely failed to see.
+    ///
+    /// A full-screen transition, a Space switch or a busy app can make `AXWindows` return nothing
+    /// for a moment. Two consecutive misses are required before a window is forgotten, and a window
+    /// that reports itself full-screen is removed immediately because that is deliberate.
+    private func pruneResilient(live: Set<CFHashCode>, pid: pid_t?) {
+        var doomed: [Win] = []
+        for (hash, win) in store.byHash {
+            if let pid, win.pid != pid { continue }
+            if live.contains(hash) {
+                missedScans[hash] = 0
+                continue
+            }
+            if AX.isFullScreen(win.el) {
+                doomed.append(win)
+                continue
+            }
+            let misses = (missedScans[hash] ?? 0) + 1
+            missedScans[hash] = misses
+            if misses >= 2 { doomed.append(win) }
+        }
+        for win in doomed {
+            store.remove(win)
+            missedScans[win.hash] = nil
+        }
+    }
+
     private func parkOtherWorkspaces() {
         let currentHashes = Set(store.windows(store.current).map(\.hash))
         let visible = axVisibleFrame

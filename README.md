@@ -5,22 +5,17 @@
 <h1 align="center">Pulsar</h1>
 
 <p align="center">
-  A tiling window manager for macOS.<br>
-  Windows arrange themselves, workspaces move with you, and the keyboard does the rest.
+  A tiling window manager for macOS.
 </p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/macOS-13%2B-blue" alt="macOS 13+">
   <img src="https://img.shields.io/badge/Apple%20silicon-arm64-blue" alt="Apple silicon">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT">
-  <img src="https://img.shields.io/badge/version-2.0.1-lightgrey" alt="2.0.1">
+  <img src="https://img.shields.io/badge/version-2.0.2-lightgrey" alt="2.0.2">
 </p>
 
 ---
-
-Pulsar replaces dragging windows around with a rule: the screen is divided into panes, and every
-window on the current workspace occupies one. It runs as a menu-bar agent — no Dock icon, no
-window of its own — and does nothing at all when you are not using it.
 
 ## Similar to Hyprland
 
@@ -146,30 +141,6 @@ Pulsar checks GitHub Releases once a day in the background; **Check for Updates�
 **Install Update** downloads the DMG, replaces the app in `/Applications`, clears the quarantine
 flag and relaunches. **Release Notes** opens the GitHub page instead. Accessibility permission is
 kept across updates, because the bundle identifier and signing certificate do not change.
-
-## Why it is efficient
-
-Everything is driven by events instead of by checking the system on a schedule.
-
-| | |
-|---|---|
-| Idle CPU | ~0.1% |
-| Idle wakeups | 0 / second |
-| Memory | ~23 MB |
-| On disk | ~250 KB |
-
-1. **Nothing runs while you are idle.** No timers, no polling loop, no mouse monitors, no keyboard
-   event tap. The process sleeps until a hotkey fires or an app launches, activates, hides or quits.
-2. **A click costs nothing.** Clicking a window cannot change the layout, so it does not trigger a
-   layout pass.
-3. **Notifications are coalesced.** One action emits several notifications; they collapse into a
-   single refresh 25 ms later.
-4. **Geometry is written only when it differs.** Every Accessibility call is synchronous IPC, so the
-   current frame is read first and the write is skipped when it matches.
-5. **Hotkeys are registered with the window server.** Carbon hotkeys wake the process only when one
-   of them is pressed; an event tap would run on every keystroke system-wide.
-6. **Layout is arithmetic.** Pane frames come from dividing a rectangle — no scene graph, no
-   animation, no re-entrant layout passes.
 
 ## Troubleshooting
 

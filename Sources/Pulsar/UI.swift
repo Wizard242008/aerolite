@@ -225,7 +225,7 @@ extension Controller: NSMenuDelegate {
         stack.orientation = .vertical
         stack.alignment = .centerX
         stack.spacing = 6
-        stack.edgeInsets = NSEdgeInsets(top: 22, left: 22, bottom: 20, right: 22)
+        stack.edgeInsets = NSEdgeInsets(top: 24, left: 22, bottom: 18, right: 22)
         stack.translatesAutoresizingMaskIntoConstraints = false
 
         let icon = NSImageView()
@@ -238,7 +238,7 @@ extension Controller: NSMenuDelegate {
         ])
 
         let name = NSTextField(labelWithString: "Pulsar")
-        name.font = .systemFont(ofSize: 20, weight: .semibold)
+        name.font = .systemFont(ofSize: 22, weight: .semibold)
         name.alignment = .center
 
         let version = NSTextField(labelWithString: "Version \(Updater.currentVersion)")
@@ -246,19 +246,20 @@ extension Controller: NSMenuDelegate {
         version.textColor = .secondaryLabelColor
         version.alignment = .center
 
-        let tagline = NSTextField(wrappingLabelWithString:
-            "A tiling window manager for macOS.\nNo polling, no timers, no work when idle.")
+        let tagline = NSTextField(labelWithString: "A tiling window manager for macOS.")
         tagline.font = .systemFont(ofSize: 12)
         tagline.textColor = .secondaryLabelColor
         tagline.alignment = .center
         tagline.preferredMaxLayoutWidth = width - 44
 
         stack.addArrangedSubview(icon)
-        stack.setCustomSpacing(12, after: icon)
+        stack.setCustomSpacing(16, after: icon)
         stack.addArrangedSubview(name)
+        stack.setCustomSpacing(2, after: name)
         stack.addArrangedSubview(version)
-        stack.setCustomSpacing(10, after: version)
+        stack.setCustomSpacing(14, after: version)
         stack.addArrangedSubview(tagline)
+
 
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 260),
                               styleMask: [.titled, .closable, .fullSizeContentView],
