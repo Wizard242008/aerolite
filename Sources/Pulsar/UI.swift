@@ -158,6 +158,12 @@ extension Controller: NSMenuDelegate {
         settings.image = symbol("gearshape")
         menu.addItem(settings)
 
+        let updates = NSMenuItem(title: "Check for Updates…", action: #selector(settingsCheckForUpdates),
+                                 keyEquivalent: "")
+        updates.target = self
+        updates.image = symbol("arrow.down.circle")
+        menu.addItem(updates)
+
         let help = NSMenuItem(title: "Pulsar Help", action: #selector(showHelp), keyEquivalent: "?")
         help.target = self
         help.image = symbol("questionmark.circle")

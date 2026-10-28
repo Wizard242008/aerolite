@@ -85,6 +85,7 @@ extension Controller {
         buttons.spacing = 8
         for (title, action) in [("Re-tile Now", #selector(settingsRetile)),
                                 ("Grant Accessibility…", #selector(openAccessibility)),
+                                ("Check for Updates", #selector(settingsCheckForUpdates)),
                                 ("Show Log", #selector(settingsShowLog))] {
             let button = NSButton(title: title, target: self, action: action)
             button.bezelStyle = .rounded
@@ -142,6 +143,69 @@ extension Controller {
         NSWorkspace.shared.open(URL(fileURLWithPath: NSHomeDirectory() + "/Library/Logs/Pulsar.log"))
     }
 
+    // MARK: - Updates
+
+    func checkForUpdates(userInitiated: Bool) {
+        Updater.check { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case .upToDate(let current):
+                if userInitiated {
+                    self.alert("You’re up to date", "Pulsar \(current) is the latest version.")
+                }
+            case .available(let release):
+                self.present(release)
+            case .failed(let message):
+                if userInitiated { self.alert("Couldn’t check for updates", message) }
+            }
+        }
+    }
+
+    /// Checked once a day in the background; never blocks launch.
+    func autoCheckForUpdates() {
+        let defaults = UserDefaults.standard
+        let last = defaults.double(forKey: "lastUpdateCheck")
+        guard Date().timeIntervalSince1970 - last > 86_400 else { return }
+        defaults.set(Date().timeIntervalSince1970, forKey: "lastUpdateCheck")
+        Updater.check { [weak self] result in
+            if case .available(let release) = result { self?.present(release) }
+        }
+    }
+
+    private func alert(_ title: String, _ text: String) {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = text
+        alert.addButton(withTitle: "OK")
+        NSApp.activate(ignoringOtherApps: true)
+        alert.runModal()
+    }
+
+    private func present(_ release: Updater.Release) {
+        let alert = NSAlert()
+        alert.messageText = "Pulsar \(release.version) is available"
+        alert.informativeText = release.notes.isEmpty
+            ? "You’re running \(Updater.currentVersion)."
+            : String(release.notes.prefix(700))
+        alert.addButton(withTitle: "Install Update")
+        alert.addButton(withTitle: "Release Notes")
+        alert.addButton(withTitle: "Later")
+        NSApp.activate(ignoringOtherApps: true)
+
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            Updater.install(release) { [weak self] error in
+                if let error { self?.alert("Update failed", error) }
+            }
+        case .alertSecondButtonReturn:
+            if let url = release.pageURL { NSWorkspace.shared.open(url) }
+        default:
+            break
+        }
+    }
+
+    @objc func settingsCheckForUpdates() { checkForUpdates(userInitiated: true) }
+
     // MARK: - Help
 
     @objc func showHelp() {
@@ -191,39 +255,155 @@ extension Controller {
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    /// A deliberately small Markdown renderer: headings, bullets, code blocks and table rows.
-    /// No attributed-markdown parsing — the help text is documentation, not user content.
+    /// Renders the bundled README for display.
+    ///
+    /// A small, purpose-built Markdown renderer: headings, bullets, fenced code, aligned tables and
+    /// inline bold / code / links. Deliberately not `NSAttributedString(markdown:)` — the document
+    /// is ours, so a predictable subset beats a general parser that can fail at runtime.
     static func render(_ markdown: String) -> NSAttributedString {
         let out = NSMutableAttributedString()
-        let body = NSFont.systemFont(ofSize: 13)
-        let mono = NSFont.monospacedSystemFont(ofSize: 11.5, weight: .regular)
+        let bodyFont = NSFont.systemFont(ofSize: 13)
+        let codeFont = NSFont.monospacedSystemFont(ofSize: 11.5, weight: .regular)
+        let boldBody = NSFont.systemFont(ofSize: 13, weight: .semibold)
 
-        func append(_ text: String, font: NSFont, color: NSColor = .labelColor, spacing: CGFloat = 2) {
-            let paragraph = NSMutableParagraphStyle()
-            paragraph.paragraphSpacing = spacing
-            out.append(NSAttributedString(string: text + "\n", attributes: [
-                .font: font, .foregroundColor: color, .paragraphStyle: paragraph,
-            ]))
+        func style(before: CGFloat, after: CGFloat, indent: CGFloat = 0) -> NSParagraphStyle {
+            let p = NSMutableParagraphStyle()
+            p.paragraphSpacingBefore = before
+            p.paragraphSpacing = after
+            p.headIndent = indent
+            p.firstLineHeadIndent = indent
+            p.lineSpacing = 1.5
+            return p
         }
 
+        /// Handles **bold**, `code` and [label](url) inside a line.
+        func inline(_ text: String, font: NSFont, color: NSColor = .labelColor) -> NSAttributedString {
+            let result = NSMutableAttributedString()
+            let pattern = try! NSRegularExpression(pattern: #"(\*\*[^*]+\*\*)|(`[^`]+`)|(\[[^\]]+\]\([^)]+\))"#)
+            let ns = text as NSString
+            var cursor = 0
+            let base: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: color]
+
+            for match in pattern.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
+                if match.range.location > cursor {
+                    result.append(NSAttributedString(string: ns.substring(with: NSRange(location: cursor, length: match.range.location - cursor)), attributes: base))
+                }
+                let token = ns.substring(with: match.range)
+                if token.hasPrefix("**") {
+                    let inner = token.dropFirst(2).dropLast(2)
+                    result.append(NSAttributedString(string: String(inner), attributes: [
+                        .font: NSFont.systemFont(ofSize: font.pointSize, weight: .semibold),
+                        .foregroundColor: color,
+                    ]))
+                } else if token.hasPrefix("`") {
+                    let inner = token.dropFirst().dropLast()
+                    result.append(NSAttributedString(string: String(inner), attributes: [
+                        .font: codeFont,
+                        .foregroundColor: NSColor.labelColor,
+                        .backgroundColor: NSColor.labelColor.withAlphaComponent(0.07),
+                    ]))
+                } else if let open = token.firstIndex(of: "["),
+                          let close = token.firstIndex(of: "]"),
+                          let urlStart = token.firstIndex(of: "(") {
+                    let label = String(token[token.index(after: open)..<close])
+                    let url = String(token[token.index(after: urlStart)..<token.index(before: token.endIndex)])
+                    var attributes = base
+                    attributes[.foregroundColor] = NSColor.linkColor
+                    if let link = URL(string: url) { attributes[.link] = link }
+                    result.append(NSAttributedString(string: label, attributes: attributes))
+                } else {
+                    result.append(NSAttributedString(string: token, attributes: base))
+                }
+                cursor = match.range.location + match.range.length
+            }
+            if cursor < ns.length {
+                result.append(NSAttributedString(string: ns.substring(from: cursor), attributes: base))
+            }
+            return result
+        }
+
+        func append(_ string: NSAttributedString, spacing: NSParagraphStyle) {
+            let mutable = NSMutableAttributedString(attributedString: string)
+            mutable.addAttribute(.paragraphStyle, value: spacing,
+                                 range: NSRange(location: 0, length: mutable.length))
+            out.append(mutable)
+            out.append(NSAttributedString(string: "\n"))
+        }
+
+        // Collect lines first: tables need a pass to size their columns.
+        let lines = markdown.components(separatedBy: .newlines)
+        var index = 0
         var inCode = false
-        for line in markdown.components(separatedBy: .newlines) {
-            if line.hasPrefix("```") { inCode.toggle(); continue }
+
+        while index < lines.count {
+            let line = lines[index]
+
+            if line.hasPrefix("```") { inCode.toggle(); index += 1; continue }
+
             if inCode {
-                append(line, font: mono)
-            } else if line.hasPrefix("# ") {
-                append(String(line.dropFirst(2)), font: .systemFont(ofSize: 22, weight: .bold), spacing: 8)
+                append(inline(line.isEmpty ? " " : line, font: codeFont), spacing: style(before: 0, after: 0))
+                index += 1
+                continue
+            }
+
+            // Table block: consecutive lines starting with |
+            if line.hasPrefix("|") {
+                var rows: [[String]] = []
+                while index < lines.count, lines[index].hasPrefix("|") {
+                    let cells = lines[index].split(separator: "|", omittingEmptySubsequences: false)
+                        .map { $0.trimmingCharacters(in: .whitespaces) }
+                        .filter { !$0.isEmpty }
+                    if !cells.allSatisfy({ $0.allSatisfy { $0 == "-" || $0 == ":" } }) {
+                        rows.append(cells)
+                    }
+                    index += 1
+                }
+                let columnCount = rows.map(\.count).max() ?? 0
+                var widths = [Int](repeating: 0, count: columnCount)
+                for row in rows {
+                    for (column, cell) in row.enumerated() where column < columnCount {
+                        widths[column] = max(widths[column], cell.count)
+                    }
+                }
+                for (rowIndex, row) in rows.enumerated() {
+                    var line = ""
+                    for column in 0..<columnCount {
+                        let cell = column < row.count ? row[column] : ""
+                        line += cell.padding(toLength: max(widths[column], cell.count), withPad: " ", startingAt: 0)
+                        if column < columnCount - 1 { line += "   " }
+                    }
+                    let font = rowIndex == 0 ? NSFont.monospacedSystemFont(ofSize: 11, weight: .semibold) : NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+                    let color: NSColor = rowIndex == 0 ? .labelColor : .secondaryLabelColor
+                    append(NSAttributedString(string: line, attributes: [.font: font, .foregroundColor: color]),
+                           spacing: style(before: 0, after: rowIndex == rows.count - 1 ? 8 : 0))
+                }
+                continue
+            }
+
+            if line.hasPrefix("# ") {
+                append(inline(String(line.dropFirst(2)), font: .systemFont(ofSize: 24, weight: .bold)),
+                       spacing: style(before: 4, after: 10))
             } else if line.hasPrefix("## ") {
-                append(String(line.dropFirst(3)), font: .systemFont(ofSize: 15, weight: .semibold), spacing: 6)
-            } else if line.hasPrefix("|") {
-                append(line, font: mono, spacing: 0)
-            } else if line.hasPrefix("- ") {
-                append("  •  " + line.dropFirst(2), font: body)
-            } else if line.isEmpty {
+                append(inline(String(line.dropFirst(3)), font: .systemFont(ofSize: 15, weight: .bold)),
+                       spacing: style(before: 16, after: 4))
+            } else if line.hasPrefix("### ") {
+                append(inline(String(line.dropFirst(4)), font: boldBody), spacing: style(before: 12, after: 2))
+            } else if line.hasPrefix("- ") || line.hasPrefix("* ") {
+                append(inline("•  " + String(line.dropFirst(2)), font: bodyFont),
+                       spacing: style(before: 1, after: 1, indent: 12))
+            } else if line.hasPrefix("> ") {
+                append(inline(String(line.dropFirst(2)), font: bodyFont, color: .secondaryLabelColor),
+                       spacing: style(before: 2, after: 6, indent: 12))
+            } else if line == "---" {
+                append(NSAttributedString(string: String(repeating: "─", count: 56),
+                                          attributes: [.font: codeFont, .foregroundColor: NSColor.tertiaryLabelColor]),
+                       spacing: style(before: 6, after: 6))
+            } else if line.trimmingCharacters(in: .whitespaces).isEmpty {
                 out.append(NSAttributedString(string: "\n"))
             } else {
-                append(line, font: body)
+                append(inline(line, font: bodyFont), spacing: style(before: 0, after: 3))
             }
+            index += 1
         }
         return out
     }

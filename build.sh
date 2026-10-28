@@ -55,6 +55,15 @@ codesign --verify --strict "$APP" && echo "    signature ok"
 codesign -dvv "$APP" 2>&1 | grep -E "^Authority|^Signature" | sed 's/^/    /'
 ls -lh "$APP/Contents/MacOS/Pulsar" | awk '{print "    binary: " $5}'
 
+echo "==> disk image"
+rm -rf build/dmg
+mkdir -p build/dmg
+cp -R "$APP" build/dmg/
+ln -s /Applications build/dmg/Applications
+hdiutil create -volname "Pulsar" -srcfolder build/dmg -ov -format UDZO -quiet build/Pulsar.dmg
+rm -rf build/dmg
+ls -lh build/Pulsar.dmg | awk '{print "    dmg: " $5}'
+
 echo "==> installing (single copy only)"
 pkill -x Pulsar 2>/dev/null || true
 sleep 0.3

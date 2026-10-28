@@ -33,22 +33,22 @@ move with you, keyboard-first control — is here.
 
 ## Install
 
+Download `Pulsar.dmg` from [Releases](https://github.com/Wizard242008/pulsar/releases), open it, and
+drag **Pulsar** into **Applications**. No terminal involved.
+
+Launch it from Applications once; from then on it starts at login via
+`~/Library/LaunchAgents/com.devansh.pulsar.plist`.
+
+### Build from source
+
 ```bash
 git clone https://github.com/Wizard242008/pulsar.git
 cd pulsar
 ./build.sh
 ```
 
-`build.sh` compiles with `swiftc`, generates the icon, signs the app, copies it to
-`/Applications/Pulsar.app` and kills any running copy. It leaves exactly one bundle on disk.
-
-To start it:
-
-```bash
-open /Applications/Pulsar.app
-```
-
-It also starts at login through `~/Library/LaunchAgents/com.devansh.pulsar.plist`.
+`build.sh` compiles with `swiftc`, generates the icon, writes `build/Pulsar.dmg`, signs the app,
+copies it to `/Applications/Pulsar.app` and kills any running copy.
 
 ## Permission
 
@@ -129,6 +129,17 @@ edges, where they cannot be seen or clicked; switching back moves them into plac
 
 The current workspace, the layout orientation, each window's size and which workspace each window
 belongs to are stored in `~/Library/Preferences/com.devansh.pulsar.plist`.
+
+## Updates
+
+Pulsar checks GitHub Releases once a day in the background, and **Check for Updates…** in the menu
+checks immediately. When a newer version exists it offers to install it.
+
+**Install Update** downloads the DMG, copies the new app into `/Applications`, clears the quarantine
+flag and relaunches. **Release Notes** opens the GitHub page instead, if you would rather read first.
+
+Accessibility permission survives updates: the bundle identifier and signing certificate do not
+change between releases, so macOS keeps the grant.
 
 ## Troubleshooting
 

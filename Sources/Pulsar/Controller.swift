@@ -79,6 +79,9 @@ final class Controller: NSObject {
         refresh()
         // Launch is the messiest moment: apps are still placing their windows, so a window can
         // look maximised for a few hundred ms. Re-check a few times, then stop for good.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
+            self?.autoCheckForUpdates()
+        }
         for delay in [0.35, 1.0, 2.5, 5.0] {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
                 self?.refresh()
@@ -167,6 +170,16 @@ final class Controller: NSObject {
         }
         if command == "orient" { toggleOrientation(); return }
         if command == "settings" { showSettings(); return }
+        if command == "updatecheck" {
+            Updater.check { result in
+                switch result {
+                case .upToDate(let v):  log("update check: up to date (\(v))")
+                case .available(let r): log("update check: \(r.version) available, dmg=\(r.dmgURL != nil), notes=\(r.notes.count) chars")
+                case .failed(let m):    log("update check failed: \(m)")
+                }
+            }
+            return
+        }
         if command == "help" { showHelp(); return }
         if command == "hoveron" {
             focusFollowsMouse = true
