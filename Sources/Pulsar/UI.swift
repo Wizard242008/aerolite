@@ -1,6 +1,6 @@
 import AppKit
 
-// The visible surface of AeroLite: menu-bar glyph, menu, and About panel.
+// The visible surface of Pulsar: menu-bar glyph, menu, and About panel.
 //
 // Kept separate from Controller so the window-management logic stays readable. Everything here is
 // built with native AppKit so it inherits the system look (vibrancy, dark mode, accessibility
@@ -14,24 +14,25 @@ extension Controller: NSMenuDelegate {
         let size = NSSize(width: 18, height: 16)
         let image = NSImage(size: size, flipped: false) { rect in
             NSColor.black.setFill()
+            let centre = NSPoint(x: rect.midX, y: rect.midY)
+            let outer = min(rect.width, rect.height) / 2
+            let inner = outer * 0.30
 
-            let gap: CGFloat = 2
-            let leftWidth: CGFloat = 7
-            let rightX = leftWidth + gap
-            let rightWidth = rect.width - rightX
-            let halfHeight = (rect.height - gap) / 2
-
-            // Smaller panes get a smaller radius, the way real window corners scale.
-            func pane(_ r: NSRect, radius: CGFloat) {
-                NSBezierPath(roundedRect: r, xRadius: radius, yRadius: radius).fill()
+            // Four-point star: alternating long and short radii read as a pulsar's beams and stay
+            // legible at 16 px, where circles and gradients turn to mush.
+            let star = NSBezierPath()
+            for step in 0..<8 {
+                let angle = CGFloat(step) * .pi / 4 + .pi / 2
+                let r = step.isMultiple(of: 2) ? outer : inner
+                let point = NSPoint(x: centre.x + cos(angle) * r, y: centre.y + sin(angle) * r)
+                step == 0 ? star.move(to: point) : star.line(to: point)
             }
-            pane(NSRect(x: 0, y: 0, width: leftWidth, height: rect.height), radius: 2)
-            pane(NSRect(x: rightX, y: halfHeight + gap, width: rightWidth, height: halfHeight), radius: 1.5)
-            pane(NSRect(x: rightX, y: 0, width: rightWidth, height: halfHeight), radius: 1.5)
+            star.close()
+            star.fill()
             return true
         }
         image.isTemplate = true
-        image.accessibilityDescription = "AeroLite"
+        image.accessibilityDescription = "Pulsar"
         return image
     }
 
@@ -45,7 +46,7 @@ extension Controller: NSMenuDelegate {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         item.button?.image = Controller.statusGlyph()
         item.button?.imagePosition = .imageOnly
-        item.button?.toolTip = "AeroLite — tiling window manager"
+        item.button?.toolTip = "Pulsar — tiling window manager"
 
         let menu = NSMenu()
         menu.delegate = self
@@ -72,7 +73,7 @@ extension Controller: NSMenuDelegate {
         // Header: name + a live one-line status, like Apple's own menu-bar utilities.
         let header = NSMenuItem()
         let title = NSMutableAttributedString(
-            string: "AeroLite\n",
+            string: "Pulsar\n",
             attributes: [.font: NSFont.systemFont(ofSize: 13, weight: .semibold)]
         )
         let statusText = trusted
@@ -145,12 +146,12 @@ extension Controller: NSMenuDelegate {
             menu.addItem(.separator())
         }
 
-        let about = NSMenuItem(title: "About AeroLite", action: #selector(showAboutPanel), keyEquivalent: "")
+        let about = NSMenuItem(title: "About Pulsar", action: #selector(showAboutPanel), keyEquivalent: "")
         about.target = self
         about.image = symbol("info.circle")
         menu.addItem(about)
 
-        let quit = NSMenuItem(title: "Quit AeroLite", action: #selector(quit), keyEquivalent: "q")
+        let quit = NSMenuItem(title: "Quit Pulsar", action: #selector(quit), keyEquivalent: "q")
         quit.target = self
         menu.addItem(quit)
     }
@@ -191,7 +192,7 @@ extension Controller: NSMenuDelegate {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 360, height: 300),
                               styleMask: [.titled, .closable, .fullSizeContentView],
                               backing: .buffered, defer: false)
-        window.title = "About AeroLite"
+        window.title = "About Pulsar"
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
         window.isMovableByWindowBackground = true
@@ -214,7 +215,7 @@ extension Controller: NSMenuDelegate {
             return field
         }
 
-        let name = label("AeroLite", size: 20, weight: .semibold, color: .labelColor, width: 320)
+        let name = label("Pulsar", size: 20, weight: .semibold, color: .labelColor, width: 320)
         let version = label("Version 1.1  ·  \(store.byHash.count) windows managed",
                             size: 11, weight: .regular, color: .secondaryLabelColor, width: 320)
         let tagline = label("A tiling window manager built for speed:\nno polling, no timers, no work when idle.",

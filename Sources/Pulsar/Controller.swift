@@ -82,7 +82,7 @@ final class Controller: NSObject {
     static weak var shared: Controller?
     private var trustTimer: Timer?
 
-    /// Debug hooks, driven by `notifyutil -p com.devansh.aerolite.<command>`.
+    /// Debug hooks, driven by `notifyutil -p com.devansh.pulsar.<command>`.
     /// A dump prints what this process — and only this process — can see through Accessibility.
     private func installDebugHooks() {
         let center = CFNotificationCenterGetDarwinNotifyCenter()
@@ -96,18 +96,18 @@ final class Controller: NSObject {
             }
         }
         CFNotificationCenterAddObserver(center, nil, observer,
-                                        "com.devansh.aerolite.dump" as CFString, nil, .deliverImmediately)
+                                        "com.devansh.pulsar.dump" as CFString, nil, .deliverImmediately)
         CFNotificationCenterAddObserver(center, nil, observer,
-                                        "com.devansh.aerolite.retile" as CFString, nil, .deliverImmediately)
+                                        "com.devansh.pulsar.retile" as CFString, nil, .deliverImmediately)
         // Darwin notifications carry no payload, so the command travels in a file and this is the
         // trigger. Registered under one fixed name — observing all notifications system-wide would
         // wake the app for unrelated traffic and defeat the point of an idle-free WM.
         CFNotificationCenterAddObserver(center, nil, observer,
-                                        "com.devansh.aerolite.cmd" as CFString, nil, .deliverImmediately)
+                                        "com.devansh.pulsar.cmd" as CFString, nil, .deliverImmediately)
     }
 
     private var commandFileURL: URL {
-        URL(fileURLWithPath: NSHomeDirectory() + "/Library/Logs/AeroLite.cmd")
+        URL(fileURLWithPath: NSHomeDirectory() + "/Library/Logs/Pulsar.cmd")
     }
 
     func runCommandFromFile() {
@@ -119,7 +119,7 @@ final class Controller: NSObject {
         runDebugCommand(command)
     }
 
-    /// Drive the WM from outside for testing: `notifyutil -p com.devansh.aerolite.cmd.ws-2`.
+    /// Drive the WM from outside for testing: `notifyutil -p com.devansh.pulsar.cmd.ws-2`.
     /// Commands: ws-<name>, move-<name>, focus-<dir>, orient, dump.
     /// Try every known way of hiding a window and report which one the window server accepts.
     /// macOS clamps window positions to keep a sliver on screen, so "park at -30000" silently
@@ -221,7 +221,7 @@ final class Controller: NSObject {
             _ = AXIsProcessTrustedWithOptions([key: true] as CFDictionary)
         }
 
-        log("Accessibility not granted — enable AeroLite in System Settings → Privacy & Security → Accessibility.")
+        log("Accessibility not granted — enable Pulsar in System Settings → Privacy & Security → Accessibility.")
         var ticks = 0
         trustTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] timer in
             ticks += 1
@@ -233,7 +233,7 @@ final class Controller: NSObject {
             } else if ticks >= 60 {
                 timer.invalidate()
                 self?.trustTimer = nil
-                log("Still untrusted. Enable AeroLite in System Settings → Privacy & Security → Accessibility, then choose “Re-tile now”.")
+                log("Still untrusted. Enable Pulsar in System Settings → Privacy & Security → Accessibility, then choose “Re-tile now”.")
             }
         }
     }
@@ -860,10 +860,10 @@ final class Controller: NSObject {
 
 /// Log to stderr *and* a file, because a launchd-started app has nowhere to print.
 func log(_ message: String) {
-    let line = "aerolite: " + message + "\n"
+    let line = "pulsar: " + message + "\n"
     FileHandle.standardError.write(line.data(using: .utf8)!)
 
-    let url = URL(fileURLWithPath: NSHomeDirectory() + "/Library/Logs/AeroLite.log")
+    let url = URL(fileURLWithPath: NSHomeDirectory() + "/Library/Logs/Pulsar.log")
     let data = line.data(using: .utf8)!
 
     // Keep the log bounded; it now records app activations, so it would otherwise grow forever.

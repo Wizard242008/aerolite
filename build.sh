@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build, sign and install AeroLite.
+# Build, sign and install Pulsar.
 #
 # TWO things here are deliberate and load-bearing:
 #
@@ -16,30 +16,30 @@
 set -euo pipefail
 
 cd "$(dirname "$0")"
-APP="build/AeroLite.app"
-DEST="/Applications/AeroLite.app"
+APP="build/Pulsar.app"
+DEST="/Applications/Pulsar.app"
 IDENTITY="Hyprmac Dev Signing"
-BUNDLE_ID="com.devansh.aerolite"
+BUNDLE_ID="com.devansh.pulsar"
 
 echo "==> compiling"
 mkdir -p build
 swiftc -O -swift-version 5 -target arm64-apple-macos13.0 \
-    Sources/AeroLite/*.swift -o build/AeroLite
+    Sources/Pulsar/*.swift -o build/Pulsar
 
 echo "==> icon"
 swiftc -O -swift-version 5 Tools/makeicon/main.swift -o build/makeicon
 rm -rf build/AppIcon.iconset
 ./build/makeicon build/AppIcon.iconset
-iconutil -c icns build/AppIcon.iconset -o build/AeroLite.icns
-ls -lh build/AeroLite.icns | awk '{print "    icns: " $5}'
+iconutil -c icns build/AppIcon.iconset -o build/Pulsar.icns
+ls -lh build/Pulsar.icns | awk '{print "    icns: " $5}'
 
 echo "==> bundling"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
-cp build/AeroLite.icns "$APP/Contents/Resources/AeroLite.icns"
-cp build/AeroLite "$APP/Contents/MacOS/AeroLite"
-chmod +x "$APP/Contents/MacOS/AeroLite"
+cp build/Pulsar.icns "$APP/Contents/Resources/Pulsar.icns"
+cp build/Pulsar "$APP/Contents/MacOS/Pulsar"
+chmod +x "$APP/Contents/MacOS/Pulsar"
 
 echo "==> signing"
 if security find-identity -v -p codesigning 2>/dev/null | grep -q "$IDENTITY"; then
@@ -52,10 +52,10 @@ fi
 
 codesign --verify --strict "$APP" && echo "    signature ok"
 codesign -dvv "$APP" 2>&1 | grep -E "^Authority|^Signature" | sed 's/^/    /'
-ls -lh "$APP/Contents/MacOS/AeroLite" | awk '{print "    binary: " $5}'
+ls -lh "$APP/Contents/MacOS/Pulsar" | awk '{print "    binary: " $5}'
 
 echo "==> installing (single copy only)"
-pkill -x AeroLite 2>/dev/null || true
+pkill -x Pulsar 2>/dev/null || true
 sleep 0.3
 rm -rf "$DEST"
 cp -R "$APP" "$DEST"

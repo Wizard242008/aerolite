@@ -3,21 +3,21 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>
-    <string>AeroLite</string>
+    <string>Pulsar</string>
     <key>CFBundleDisplayName</key>
-    <string>AeroLite</string>
+    <string>Pulsar</string>
     <key>CFBundleIdentifier</key>
-    <string>com.devansh.aerolite</string>
+    <string>com.devansh.pulsar</string>
     <key>CFBundleExecutable</key>
-    <string>AeroLite</string>
+    <string>Pulsar</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.1</string>
+    <string>2.0</string>
     <key>CFBundleVersion</key>
-    <string>2</string>
+    <string>20</string>
     <key>CFBundleIconFile</key>
-    <string>AeroLite</string>
+    <string>Pulsar</string>
     <key>LSApplicationCategoryType</key>
     <string>public.app-category.utilities</string>
     <key>NSHumanReadableCopyright</key>

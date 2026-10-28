@@ -1,6 +1,6 @@
 import AppKit
 
-// AeroLite — a minimal, event-driven tiling window manager for macOS.
+// Pulsar — a minimal, event-driven tiling window manager for macOS.
 //
 // Built to replace AeroSpace on machines where AeroSpace's cost is noticeable. The design notes
 // live at the top of Controller.swift; the short version is: no polling, coalesced refreshes,
@@ -12,15 +12,15 @@ import AppKit
 //   --diagnose    print permission + AX reachability from this binary's own identity, then exit
 
 if CommandLine.arguments.contains("--diagnose") {
-    // Running inside the bundle means TCC attributes this to com.devansh.aerolite, so the answer
+    // Running inside the bundle means TCC attributes this to com.devansh.pulsar, so the answer
     // here is the same answer the real agent gets.
     let trusted = AXIsProcessTrusted()
-    print("bundle id:    com.devansh.aerolite")
+    print("bundle id:    com.devansh.pulsar")
     print("trusted:      \(trusted ? "YES" : "NO")")
 
     if !trusted {
         print("windows:      unreadable (Accessibility not granted)")
-        print("verdict:      enable AeroLite in System Settings → Privacy & Security → Accessibility")
+        print("verdict:      enable Pulsar in System Settings → Privacy & Security → Accessibility")
         exit(2)
     }
 
@@ -65,14 +65,31 @@ if let flag = CommandLine.arguments.firstIndex(of: "--render-glyph"),
 let app = NSApplication.shared
 app.setActivationPolicy(.accessory)   // menu-bar app: no Dock icon, no app switcher entry
 
-// Single instance only. The login agent and a manual launch would otherwise both tile the same
-// windows, fighting over every frame.
+// Single instance only — but tolerate a race with an instance that is on its way out.
+//
+// `kill` followed immediately by a launch starts the replacement before the old process has
+// finished dying. Exiting straight away in that window leaves the launchd job dead while an
+// orphan keeps tiling, which is exactly how "it restarted and lost my layout" happens.
 let current = NSRunningApplication.current
-let duplicates = NSRunningApplication.runningApplications(withBundleIdentifier: "com.devansh.aerolite")
-    .filter { $0 != current }
-if !duplicates.isEmpty {
-    log("another instance is already running — exiting")
-    exit(0)
+func duplicates() -> [NSRunningApplication] {
+    NSRunningApplication.runningApplications(withBundleIdentifier: "com.devansh.pulsar")
+        .filter { $0 != current && !$0.isTerminated }
+}
+
+if !duplicates().isEmpty {
+    // Nudge the live instance to re-tile, then give a dying one up to two seconds to disappear.
+    CFNotificationCenterPostNotification(CFNotificationCenterGetDarwinNotifyCenter(),
+                                         CFNotificationName("com.devansh.pulsar.retile" as CFString),
+                                         nil, nil, true)
+    let deadline = Date().addingTimeInterval(2.0)
+    while Date() < deadline && !duplicates().isEmpty {
+        usleep(100_000)
+    }
+    if !duplicates().isEmpty {
+        log("another instance is already running — exiting")
+        exit(0)
+    }
+    log("previous instance was still exiting — taking over")
 }
 
 let controller = Controller()

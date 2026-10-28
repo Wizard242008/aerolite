@@ -2,12 +2,12 @@
 import PackageDescription
 
 let package = Package(
-    name: "AeroLite",
+    name: "Pulsar",
     platforms: [.macOS(.v13)],
     targets: [
         .executableTarget(
-            name: "AeroLite",
-            path: "Sources/AeroLite",
+            name: "Pulsar",
+            path: "Sources/Pulsar",
             swiftSettings: [.unsafeFlags(["-swift-version", "5"])]
         )
     ]

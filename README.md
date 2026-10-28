@@ -1,9 +1,9 @@
-# AeroLite
+# Pulsar
 
 A minimal tiling window manager for macOS, built to replace AeroSpace on an 8 GB Mac where
 AeroSpace's cost was noticeable. Same idea and almost the same keys — a fraction of the machinery.
 
-| | AeroSpace | AeroLite |
+| | AeroSpace | Pulsar |
 |---|---|---|
 | Bundle size | 19.9 MB | **0.2 MB** |
 | Idle CPU | — | **0.01 s per 30 s (~0.03%)** |
@@ -12,11 +12,11 @@ AeroSpace's cost was noticeable. Same idea and almost the same keys — a fracti
 | Refresh on mouse-up | yes | **never** |
 | Geometry writes | every layout pass | **only when the frame actually differs** |
 
-![AeroLite icon](docs/icon.png)
+![Pulsar icon](docs/icon.png)
 
 ## UI
 
-AeroLite lives in the menu bar as a mono­chrome template glyph — one tall pane, two stacked — so it
+Pulsar lives in the menu bar as a mono­chrome template glyph — one tall pane, two stacked — so it
 inherits the system tint in light mode, dark mode and when the menu is open.
 
 Opening it shows a live panel rather than a static menu:
@@ -27,17 +27,18 @@ Opening it shows a live panel rather than a static menu:
 - **Enabled**, **Re-tile Now**, **Grant Accessibility…** (only when permission is missing), **About**
 
 The app icon is drawn in code (`Tools/makeicon`) rather than committed as a binary asset, so it can
-be regenerated at any size: a squircle with three panes and one accent pane for the focused window.
+be regenerated at any size and reviewed as source: a neutron star seen edge-on — a white core, two
+blurred emission beams and, at large sizes, faint pulse rings.
 
 ## Install
 
 ```bash
-./build.sh                       # compiles and signs into build/AeroLite.app
-cp -R build/AeroLite.app /Applications/
-open /Applications/AeroLite.app
+./build.sh                       # compiles and signs into build/Pulsar.app
+cp -R build/Pulsar.app /Applications/
+open /Applications/Pulsar.app
 ```
 
-Login startup is handled by `~/Library/LaunchAgents/com.devansh.aerolite.plist`.
+Login startup is handled by `~/Library/LaunchAgents/com.devansh.pulsar.plist`.
 The app runs as a menu-bar agent (`LSUIElement`): no Dock icon, no app-switcher entry.
 
 ## Permission
@@ -45,10 +46,10 @@ The app runs as a menu-bar agent (`LSUIElement`): no Dock icon, no app-switcher 
 The first thing to check, always:
 
 ```bash
-/Applications/AeroLite.app/Contents/MacOS/AeroLite --diagnose
+/Applications/Pulsar.app/Contents/MacOS/Pulsar --diagnose
 ```
 
-It reports `trusted: YES/NO` from the app's own TCC identity. If `NO`, enable AeroLite in
+It reports `trusted: YES/NO` from the app's own TCC identity. If `NO`, enable Pulsar in
 **System Settings → Privacy & Security → Accessibility** (the menu-bar item "Grant Accessibility…"
 opens that exact pane). Until then every AX call silently fails and the app manages nothing —
 windows keep their old positions, which looks like "overlapping", but is really "untouched".
@@ -123,12 +124,12 @@ keystroke system-wide, which is the usual reason a window manager burns idle CPU
 
 | File | Role |
 |---|---|
-| `Sources/AeroLite/main.swift` | entry point, `--diagnose` |
-| `Sources/AeroLite/AX.swift` | AX wrappers: windows, frames, attributes, full-screen detection |
-| `Sources/AeroLite/Model.swift` | `Win` (identity = the `AXUIElement`'s `CFHash`), `Orientation`, `Store` |
-| `Sources/AeroLite/Layout.swift` | pure geometry, no AX — unit-testable |
-| `Sources/AeroLite/Hotkeys.swift` | Carbon hotkey registration |
-| `Sources/AeroLite/Controller.swift` | event handling, refresh, tiling, workspaces, menu |
+| `Sources/Pulsar/main.swift` | entry point, `--diagnose` |
+| `Sources/Pulsar/AX.swift` | AX wrappers: windows, frames, attributes, full-screen detection |
+| `Sources/Pulsar/Model.swift` | `Win` (identity = the `AXUIElement`'s `CFHash`), `Orientation`, `Store` |
+| `Sources/Pulsar/Layout.swift` | pure geometry, no AX — unit-testable |
+| `Sources/Pulsar/Hotkeys.swift` | Carbon hotkey registration |
+| `Sources/Pulsar/Controller.swift` | event handling, refresh, tiling, workspaces, menu |
 | `Tools/wmpeek` | reads window geometry with no TCC permission (`--check` detects overlap) |
 
 Window identity is the `AXUIElement`'s `CFHash`, never the title or index — titles change and
