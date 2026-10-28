@@ -1,149 +1,172 @@
 # Pulsar
 
-A minimal tiling window manager for macOS, built to replace AeroSpace on an 8 GB Mac where
-AeroSpace's cost was noticeable. Same idea and almost the same keys — a fraction of the machinery.
+A tiling window manager for macOS. Windows are arranged automatically instead of being dragged
+around, and virtual workspaces keep separate sets of windows on one display.
 
-| | AeroSpace | Pulsar |
-|---|---|---|
-| Bundle size | 19.9 MB | **0.2 MB** |
-| Idle CPU | — | **0.01 s per 30 s (~0.03%)** |
-| Physical footprint | — | **22.8 MB** |
-| Polling / timers | yes | **none after startup** |
-| Refresh on mouse-up | yes | **never** |
-| Geometry writes | every layout pass | **only when the frame actually differs** |
+Built because AeroSpace was slow on an 8 GB Mac. Same idea, less machinery.
 
-![Pulsar icon](docs/icon.png)
+![icon](docs/icon.png)
 
-## UI
+## Requirements
 
-Pulsar lives in the menu bar as a mono­chrome template glyph — one tall pane, two stacked — so it
-inherits the system tint in light mode, dark mode and when the menu is open.
-
-Opening it shows a live panel rather than a static menu:
-
-- **Header** — current workspace, windows on it, and how many are managed in total
-- **Workspaces** submenu — every workspace with its window count and a checkmark on the active one
-- **Layout** — horizontal/vertical, reflecting the current state
-- **Enabled**, **Re-tile Now**, **Grant Accessibility…** (only when permission is missing), **About**
-
-The app icon is drawn in code (`Tools/makeicon`) rather than committed as a binary asset, so it can
-be regenerated at any size and reviewed as source: a neutron star seen edge-on — a white core, two
-blurred emission beams and, at large sizes, faint pulse rings.
+- macOS 13 or later, Apple silicon (the build script targets `arm64-apple-macos13.0`)
+- Accessibility permission, granted once
+- No dependencies: no Swift Package Manager step, no third-party libraries
 
 ## Install
 
 ```bash
-./build.sh                       # compiles and signs into build/Pulsar.app
-cp -R build/Pulsar.app /Applications/
+git clone https://github.com/Wizard242008/pulsar.git
+cd pulsar
+./build.sh
+```
+
+`build.sh` compiles with `swiftc`, generates the icon, signs the app, copies it to
+`/Applications/Pulsar.app` and kills any running copy. It leaves exactly one bundle on disk.
+
+To start it:
+
+```bash
 open /Applications/Pulsar.app
 ```
 
-Login startup is handled by `~/Library/LaunchAgents/com.devansh.pulsar.plist`.
-The app runs as a menu-bar agent (`LSUIElement`): no Dock icon, no app-switcher entry.
+It also starts at login through `~/Library/LaunchAgents/com.devansh.pulsar.plist`.
 
 ## Permission
 
-The first thing to check, always:
+On first launch macOS asks for Accessibility. If it doesn't, or you dismissed it:
 
-```bash
-/Applications/Pulsar.app/Contents/MacOS/Pulsar --diagnose
-```
+1. Open **System Settings → Privacy & Security → Accessibility**
+2. Enable **Pulsar** (use **+** and choose `/Applications/Pulsar.app` if it isn't listed)
 
-It reports `trusted: YES/NO` from the app's own TCC identity. If `NO`, enable Pulsar in
-**System Settings → Privacy & Security → Accessibility** (the menu-bar item "Grant Accessibility…"
-opens that exact pane). Until then every AX call silently fails and the app manages nothing —
-windows keep their old positions, which looks like "overlapping", but is really "untouched".
+Until this is granted the app cannot read or move windows, so nothing happens. The menu shows
+"Accessibility permission needed" while it is missing.
 
-The menu-bar icon is a status light: **◧** working, **◧⚠** unpermitted.
+## Usage
 
-## Keys
+Click the star in the menu bar to see the current workspace, how many windows are on it, and to
+switch workspaces. Everything else is keyboard:
 
 | Keys | Action |
 |---|---|
 | `alt-h` `alt-j` `alt-k` `alt-l` | focus left / down / up / right |
-| `alt-shift-h/j/k/l` | move window in that direction |
+| `alt-shift-h/j/k/l` | move the focused window in that direction |
 | `alt-minus` / `alt-equal` | shrink / grow the focused window |
-| `alt-slash` | toggle horizontal ↔ vertical tiling |
-| `alt-1…9` / `alt-shift-1…9` | switch workspace / send window to workspace |
-| `alt-a…z` (except `hjkl`) / `alt-shift-<letter>` | switch workspace / send window to workspace |
+| `alt-slash` | toggle horizontal / vertical split |
+| `alt-1…9` | switch to workspace 1–9 |
+| `alt-shift-1…9` | send the focused window to workspace 1–9 |
+| `alt-a…z` (except `h j k l`) | switch to that lettered workspace |
+| `alt-shift-<letter>` | send the focused window to that workspace |
 
-Registered with Carbon `RegisterEventHotKey`, not a `CGEventTap` — an event tap runs on every
-keystroke system-wide, which is the usual reason a window manager burns idle CPU.
+Clicking an app in the Dock, or switching to it with Cmd-Tab, jumps to the workspace holding its
+window. Turn that off with **Follow App to Its Workspace** in the menu.
 
 ## Behaviour
 
-- **Non-overlapping by construction.** `Layout.frames` partitions the visible screen; each pane's
-  origin is the previous pane's edge, and the last pane takes the remainder. Equal thirds sum to
-  exactly the screen width (unit-tested), so there is no seam to leak through.
-- **One window fills the screen; two split it.** The layout is built for 1–2 windows per workspace,
-  which is how this machine is actually used.
-- **Full-screen is out of scope.** A window reporting `AXFullScreen` is removed from management
-  entirely — never tiled, never parked. Parking full-screen windows is what leaves a user on a
-  black screen with no way back. Geometry is used only as a safety check before moving a window
-  off-screen, never to decide whether to manage it.
-- **The size you set sticks.** Dragging a divider is adopted as the layout ratio instead of being
-  undone at the next refresh, and sizes are persisted per window so they survive a restart. Weights
-  are re-derived from the achieved frames after every pass, so a window pinned at its minimum
-  cannot leave a weight inflated and make a later resize look broken. Resizing still yields to an
-  app's minimum size: asking for a wider pane than the neighbour allows stops at that neighbour's
-  floor rather than overlapping it.
-- **Clicking an app follows it.** Activating an app from the Dock or Cmd-Tab jumps to the workspace
-  holding its window instead of doing nothing because the window is parked off-screen. It uses the
-  window you last worked in when the app has several. Toggle it from the menu.
-  *Known gap:* macOS sends no activation event when the app is already frontmost, so if you hotkey
-  to an empty desktop while an app stays active and then click that same app, nothing happens.
-- **Placement survives restarts — including hard kills.** Placement is written the moment a window
-  changes workspace, not on a timer, and the app saves on SIGTERM/SIGINT/SIGHUP and on quit. A
-  `kill -9` therefore still restores the layout. Restoration tries the exact app+title key first,
-  then falls back to "where this app last lived", because window titles drift constantly (a Slack
-  channel, an unread count, a browser tab) and an exact-key miss used to dump every window onto
-  one workspace. Startup also refuses to write the map until the first discovery pass completes,
-  so a crash during launch can never erase it.
-- **Placement survives restarts.** Each window is remembered by app bundle id + window title, so
-  after a relaunch or login it returns to the workspace it was on — the workspace itself, the
-  orientation and the current workspace all persist. A renamed window (a new browser tab, an
-  unsaved document) looks like a new window and lands on the current workspace: a safe fallback,
-  never a lost window.
-- **Other workspaces are hidden by parking** windows off-screen at x = −30000, re-verified on every
-  refresh (apps restore their own frames on reactivation, so a one-shot park leaks).
+- **One window fills the screen, two split it, three or more form a grid.** Designed for a small
+  number of windows per workspace.
+- **Window minimum sizes are respected.** macOS provides no way to ask an app for its minimum size,
+  so it is measured: if a window refuses a size and stays larger, that size is recorded per app and
+  the layout allocates around it. If the minimums cannot all fit, panes run past the screen edge
+  rather than overlapping.
+- **A size you set stays set.** Dragging a divider is folded back into the layout ratio, and sizes
+  are saved per window, so they survive refreshes and restarts.
+- **Full-screen windows are left alone.** A window reporting `AXFullScreen` is removed from
+  management entirely: never tiled, never moved off-screen.
+- **Placement survives restarts.** Each window is remembered by app bundle id plus window title,
+  with a per-app fallback for when the title has changed. After a restart or logout, windows return
+  to the workspace they were on.
 
-## Why it is fast
+## Why it is faster
 
-1. **No idle work.** No timers, no polling, no mouse monitors. It wakes for hotkeys and for a
-   handful of `NSWorkspace` notifications the system already broadcasts.
-2. **Bursts are coalesced.** One app activation emits several notifications; they collapse into a
-   single refresh 25 ms later.
-3. **Writes are diffed.** Geometry is read from the window and compared before setting; if the
-   window is already correct, nothing is sent.
-4. **Truth over cache.** Frames are re-read from AX before every write. Diffing against a cached
-   "last frame we wrote" is how windows stay overlapped forever once something else moves them.
-5. **Single pass per event.** No per-window retry storms; a failed set is retried once in the
-   opposite order (position→size vs size→position) because some apps accept only one.
+The difference from AeroSpace is mostly about *when* work happens.
 
-## Layout of the source
+| | AeroSpace | Pulsar |
+|---|---|---|
+| Refresh trigger | every left mouse-up, every app activation, plus timers | hotkeys and a few `NSWorkspace` notifications |
+| Mouse-up cost | full session refresh | nothing |
+| Repeated events | one refresh each | coalesced into one, 25 ms later |
+| Geometry writes | every layout pass | only where the frame differs |
+| Keystroke handling | — | Carbon hotkeys, no system-wide event tap |
+| Idle wakeups | polling | 0/s |
+| Idle CPU | — | ~0.03% |
+| Binary | 19.9 MB | ~250 KB |
 
-| File | Role |
-|---|---|
-| `Sources/Pulsar/main.swift` | entry point, `--diagnose` |
-| `Sources/Pulsar/AX.swift` | AX wrappers: windows, frames, attributes, full-screen detection |
-| `Sources/Pulsar/Model.swift` | `Win` (identity = the `AXUIElement`'s `CFHash`), `Orientation`, `Store` |
-| `Sources/Pulsar/Layout.swift` | pure geometry, no AX — unit-testable |
-| `Sources/Pulsar/Hotkeys.swift` | Carbon hotkey registration |
-| `Sources/Pulsar/Controller.swift` | event handling, refresh, tiling, workspaces, menu |
-| `Tools/wmpeek` | reads window geometry with no TCC permission (`--check` detects overlap) |
+In more detail:
 
-Window identity is the `AXUIElement`'s `CFHash`, never the title or index — titles change and
-indices shift, which is the classic "wrong window moved" bug.
+1. **Nothing runs while you are idle.** No timers, no polling loop, no mouse monitors, no event tap.
+   The process sleeps until a hotkey fires or an app launches, activates, hides or quits.
+2. **A click no longer triggers a layout pass.** AeroSpace performs a full refresh on every left
+   mouse-up: enumerating apps and windows and recomputing geometry while you are just clicking.
+   Pulsar does nothing on mouse-up.
+3. **Notifications are coalesced.** Launching an app emits several notifications; they collapse into
+   a single refresh 25 ms later instead of several passes.
+4. **Geometry is written only when it differs.** Every Accessibility call is synchronous IPC.
+   Reading the current frame first and skipping the write when it matches removes most of it.
+5. **Hotkeys cost nothing when idle.** Carbon hotkeys live in the window server's hotkey table;
+   a `CGEventTap` runs code on every keystroke system-wide.
 
-## Build note
+Measured on an 8 GB M2 MacBook Pro, 1680×1050 display: 0.0 wakeups/s and ~0.03% CPU while idle,
+~23 MB physical footprint.
 
-`swift build` fails on this machine: the CommandLineTools install has a broken XCBuild
-(`Unknown error parsing property list`). `build.sh` therefore invokes `swiftc` directly and skips
-SwiftPM entirely; the same sources compile cleanly that way.
+## Workspaces
 
-## Verify without permission
+Workspaces are named `1`–`9` and `a`–`z`, excluding `h`, `j`, `k`, `l` because those are focus keys.
+Windows on other workspaces are moved to the bottom-left corner of the screen, one pixel past the
+edges, where they cannot be seen or clicked; switching back moves them into place.
+
+The current workspace, the layout orientation, each window's size and which workspace each window
+belongs to are stored in `~/Library/Preferences/com.devansh.pulsar.plist`.
+
+## Troubleshooting
+
+The app logs to `~/Library/Logs/Pulsar.log`. The most useful line is:
+
+```
+pulsar: refresh ws=b tracked=5 onScreen=5 trusted=true
+```
+
+`trusted=false` means the Accessibility permission is missing or was reset.
+
+`build/wmpeek` reads window geometry without needing Accessibility:
 
 ```bash
-./build/wmpeek --check     # tiling summary, overlap count, pane positions
+./build/wmpeek --check     # overlap count, pane positions, total span
 ./build/wmpeek --parked    # windows hidden on other workspaces
 ```
+
+Force a refresh, or dump the app's own view of every window:
+
+```bash
+notifyutil -p com.devansh.pulsar.retile
+notifyutil -p com.devansh.pulsar.dump     # then read ~/Library/Logs/Pulsar.log
+```
+
+If the Accessibility permission appears to reset after a rebuild, that is a signing problem: an
+ad-hoc signature's identity is the binary hash, so a new build looks like a new app to macOS.
+`build.sh` signs with a certificate instead, which keeps the grant across rebuilds.
+
+## Building
+
+`swift build` does not work on this machine: the CommandLineTools install has a broken XCBuild
+(`Unknown error parsing property list`). `build.sh` calls `swiftc` directly:
+
+```bash
+swiftc -O -swift-version 5 -target arm64-apple-macos13.0 Sources/Pulsar/*.swift -o build/Pulsar
+```
+
+| File | Purpose |
+|---|---|
+| `Sources/Pulsar/main.swift` | entry point, `--diagnose`, `--render-glyph` |
+| `Sources/Pulsar/Controller.swift` | refresh, layout application, workspaces, persistence |
+| `Sources/Pulsar/AX.swift` | Accessibility wrappers: windows, frames, attributes |
+| `Sources/Pulsar/Layout.swift` | pure geometry, no AX: splits, grid, minimum-size allocation |
+| `Sources/Pulsar/Model.swift` | `Win`, `Orientation`, `Store` |
+| `Sources/Pulsar/Hotkeys.swift` | Carbon hotkey registration |
+| `Sources/Pulsar/UI.swift` | menu bar item, menu, About panel |
+| `Tools/makeicon` | draws the app icon and writes every iconset size |
+| `Tools/wmpeek` | reads window geometry without Accessibility |
+
+## License
+
+MIT — see `LICENSE`.
