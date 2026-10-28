@@ -338,13 +338,22 @@ extension Controller {
         }
 
         // Collect lines first: tables need a pass to size their columns.
-        let lines = markdown.components(separatedBy: .newlines)
+        // The README carries a little HTML for its GitHub header; strip the tags, keep the text.
+        let sanitised = markdown.replacingOccurrences(of: "<[^>]+>", with: "",
+                                                     options: .regularExpression)
+        let lines = sanitised.components(separatedBy: .newlines)
         var index = 0
         var inCode = false
+        var lastWasBlank = false
 
         while index < lines.count {
-            let line = lines[index]
+            let line = inCode ? lines[index] : lines[index].trimmingCharacters(in: .whitespaces)
 
+            // The README uses a little HTML for its header (centred title, badges, <details>).
+            // In the Help window those tags are noise, so they are skipped and their markdown
+            // contents render normally.
+            let trimmedLine = line.trimmingCharacters(in: .whitespaces)
+            if trimmedLine.hasPrefix("<") { index += 1; continue }
             if line.hasPrefix("![") { index += 1; continue }      // images have nothing to show here
             if line.hasPrefix("```") { inCode.toggle(); index += 1; continue }
 
@@ -410,12 +419,19 @@ extension Controller {
                 append(NSAttributedString(string: String(repeating: "─", count: 56),
                                           attributes: [.font: codeFont, .foregroundColor: NSColor.tertiaryLabelColor]),
                        spacing: style(before: 6, after: 6))
-            } else if line.trimmingCharacters(in: .whitespaces).isEmpty {
-                out.append(NSAttributedString(string: "\n"))
+            } else if line.isEmpty {
+                if !lastWasBlank { out.append(NSAttributedString(string: "\n")) }
+                lastWasBlank = true
+                index += 1
+                continue
             } else {
                 append(inline(line, font: bodyFont), spacing: style(before: 0, after: 3))
             }
+            if !line.isEmpty { lastWasBlank = false }
             index += 1
+        }
+        while out.string.hasPrefix("\n") {
+            out.deleteCharacters(in: NSRange(location: 0, length: 1))
         }
         return out
     }

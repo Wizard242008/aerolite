@@ -108,7 +108,7 @@ var signalSources: [DispatchSourceSignal] = []
 for sig in [SIGTERM, SIGINT, SIGHUP] {
     let source = DispatchSource.makeSignalSource(signal: sig, queue: .main)
     source.setEventHandler {
-        controller.saveState()
+        controller.prepareForQuit()
         exit(0)
     }
     source.resume()

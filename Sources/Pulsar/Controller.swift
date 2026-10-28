@@ -25,7 +25,7 @@ final class Controller: NSObject {
     private var axObservers: [pid_t: AXObserver] = [:]
     private var appRefreshWork: [pid_t: DispatchWorkItem] = [:]
     private weak var lastFocused: Win?
-    private var saveWork: DispatchWorkItem?
+    var saveWork: DispatchWorkItem?
     /// Hyprland-style hover focus. Off by default because it wakes the process on mouse movement.
     var focusFollowsMouse = false { didSet { updateMouseMonitor() } }
     private var mouseMonitor: Any?
@@ -35,7 +35,7 @@ final class Controller: NSObject {
     /// When on, activating an app (Dock click, Cmd-Tab) jumps to the workspace holding its window.
     var followAppAcrossWorkspaces = true
     /// Guards persistence against writing an empty map before the first discovery pass finishes.
-    private var hasCompletedFirstRefresh = false
+    var hasCompletedFirstRefresh = false
     var statusItem: NSStatusItem?
     private var enabledItem: NSMenuItem?
     var enabled = true
@@ -46,7 +46,7 @@ final class Controller: NSObject {
     // MARK: - screen
 
     /// Full screen rect in AX coordinates (origin top-left, y down).
-    private var axScreenFrame: CGRect {
+    var axScreenFrame: CGRect {
         guard let screen = NSScreen.screens.first ?? NSScreen.main else {
             return CGRect(x: 0, y: 0, width: 1440, height: 900)
         }
@@ -54,7 +54,7 @@ final class Controller: NSObject {
     }
 
     /// Visible screen area expressed in AX coordinates (origin top-left, y down).
-    private var axVisibleFrame: CGRect {
+    var axVisibleFrame: CGRect {
         let screen = NSScreen.screens.first ?? NSScreen.main
         guard let screen else { return CGRect(x: 0, y: 0, width: 1440, height: 900) }
         let vf = screen.visibleFrame
@@ -78,7 +78,7 @@ final class Controller: NSObject {
         observeApps()
         NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification,
                                                object: nil, queue: .main) { [weak self] _ in
-            self?.saveState()
+            self?.prepareForQuit()
         }
         refresh()
         // Launch is the messiest moment: apps are still placing their windows, so a window can
@@ -98,187 +98,6 @@ final class Controller: NSObject {
 
     /// Debug hooks, driven by `notifyutil -p com.devansh.pulsar.<command>`.
     /// A dump prints what this process — and only this process — can see through Accessibility.
-    private func installDebugHooks() {
-        let center = CFNotificationCenterGetDarwinNotifyCenter()
-        let observer: CFNotificationCallback = { _, _, name, _, _ in
-            guard let raw = name?.rawValue as String? else { return }
-            DispatchQueue.main.async {
-                guard let controller = Controller.shared else { return }
-                if raw.hasSuffix(".dump") { controller.dumpState() }
-                if raw.hasSuffix(".retile") { controller.refresh() }
-                if raw.hasSuffix(".cmd") { controller.runCommandFromFile() }
-            }
-        }
-        CFNotificationCenterAddObserver(center, nil, observer,
-                                        "com.devansh.pulsar.dump" as CFString, nil, .deliverImmediately)
-        CFNotificationCenterAddObserver(center, nil, observer,
-                                        "com.devansh.pulsar.retile" as CFString, nil, .deliverImmediately)
-        // Darwin notifications carry no payload, so the command travels in a file and this is the
-        // trigger. Registered under one fixed name — observing all notifications system-wide would
-        // wake the app for unrelated traffic and defeat the point of an idle-free WM.
-        CFNotificationCenterAddObserver(center, nil, observer,
-                                        "com.devansh.pulsar.cmd" as CFString, nil, .deliverImmediately)
-    }
-
-    private var commandFileURL: URL {
-        URL(fileURLWithPath: NSHomeDirectory() + "/Library/Logs/Pulsar.cmd")
-    }
-
-    func runCommandFromFile() {
-        let url = commandFileURL
-        guard let command = try? String(contentsOf: url, encoding: .utf8)
-            .trimmingCharacters(in: .whitespacesAndNewlines), !command.isEmpty else { return }
-        try? FileManager.default.removeItem(at: url)
-        log("debug command: \(command)")
-        runDebugCommand(command)
-    }
-
-    /// Drive the WM from outside for testing: `notifyutil -p com.devansh.pulsar.cmd.ws-2`.
-    /// Commands: ws-<name>, move-<name>, focus-<dir>, orient, dump.
-    /// Try every known way of hiding a window and report which one the window server accepts.
-    /// macOS clamps window positions to keep a sliver on screen, so "park at -30000" silently
-    /// becomes "park at -800" — visible to the user and useless as a hide.
-    func parkProbe() {
-        guard let win = store.windows(store.current).first else { log("parkProbe: no window"); return }
-        let app = win.app.localizedName ?? "?"
-        guard let original = AX.currentFrame(win.el) else { return }
-        log("parkProbe on \(app) \(Int(original.width))x\(Int(original.height))")
-
-        func report(_ label: String) {
-            let f = AX.currentFrame(win.el) ?? .zero
-            log("  \(label): x=\(Int(f.minX)) y=\(Int(f.minY)) \(Int(f.width))x\(Int(f.height))")
-        }
-
-        AX.setPosition(win.el, CGPoint(x: -30000, y: 0)); report("x=-30000")
-        AX.setPosition(win.el, CGPoint(x: 0, y: 3000));  report("y=+3000")
-        AX.setPosition(win.el, CGPoint(x: -30000, y: 3000)); report("both")
-        AX.setSize(win.el, CGSize(width: 1, height: 1)); report("size 1x1")
-        AX.setSize(win.el, CGSize(width: original.width, height: original.height))
-        AX.setPosition(win.el, original.origin)
-        AX.setBool(win.el, kAXMinimizedAttribute as CFString, true); report("minimized")
-        AX.setBool(win.el, kAXMinimizedAttribute as CFString, false); report("restored")
-        let v = axVisibleFrame
-        AX.setPosition(win.el, CGPoint(x: v.minX - original.width + 1, y: v.maxY - 1)); report("corner park")
-        AX.setPosition(win.el, original.origin)
-        log("parkProbe done")
-    }
-
-    func runDebugCommand(_ command: String) {
-        // Single-word commands never reach the verb-argument split below.
-        if command == "drag" {
-            guard let win = focused(), let f = AX.currentFrame(win.el) else { return }
-            let newWidth = max(f.width * 1.45, 200)
-            AX.setSize(win.el, CGSize(width: newWidth, height: f.height))
-            log("drag: forced width \(Int(f.width)) -> \(Int(newWidth)), cached frame left stale")
-            return
-        }
-        if command == "orient" { toggleOrientation(); return }
-        if command == "settings" { showSettings(); return }
-        if command == "updateinstall" {
-            Updater.check { result in
-                guard case .available(let release) = result else {
-                    log("updateinstall: nothing available")
-                    return
-                }
-                log("updateinstall: installing \(release.version)")
-                Updater.install(release) { error in
-                    if let error { log("updateinstall failed: \(error)") }
-                    else {
-                        log("updateinstall: handing off to the swap script, quitting")
-                        NSApp.terminate(nil)
-                    }
-                }
-            }
-            return
-        }
-        if command == "updatecheck" {
-            Updater.check { result in
-                switch result {
-                case .upToDate(let v):  log("update check: up to date (\(v))")
-                case .available(let r): log("update check: \(r.version) available, dmg=\(r.dmgURL != nil), notes=\(r.notes.count) chars")
-                case .failed(let m):    log("update check failed: \(m)")
-                }
-            }
-            return
-        }
-        if command == "help" { showHelp(); return }
-        if command == "hoveron" {
-            focusFollowsMouse = true
-            UserDefaults.standard.set(true, forKey: "focusFollowsMouse")
-            log("focus follows mouse: on")
-            return
-        }
-        if command == "hoveroff" {
-            focusFollowsMouse = false
-            UserDefaults.standard.set(false, forKey: "focusFollowsMouse")
-            log("focus follows mouse: off")
-            return
-        }
-        if command == "hover" {
-            // Warp the pointer over the second window and post a real mouseMoved event, so the
-            // global monitor is exercised exactly as it would be by a hand on the trackpad.
-            guard let screen = NSScreen.screens.first else { return }
-            let windows = store.windows(store.current)
-            guard windows.count > 1 else { log("hover: need 2+ windows"); return }
-            let target = windows[1]
-            let ax = CGPoint(x: target.frame.midX, y: target.frame.midY)
-            let point = CGPoint(x: ax.x, y: screen.frame.height - ax.y)
-            CGWarpMouseCursorPosition(point)
-            CGEvent(mouseEventSource: nil, mouseType: .mouseMoved,
-                    mouseCursorPosition: point, mouseButton: .left)?
-                .post(tap: .cghidEventTap)
-            log("hover: pointer over \(target.title.prefix(24))")
-            return
-        }
-
-        let parts = command.split(separator: "-", maxSplits: 1).map(String.init)
-        guard parts.count == 2 else {
-            if command == "orient" { toggleOrientation() }
-            return
-        }
-        let (verb, arg) = (parts[0], parts[1])
-        switch verb {
-        case "probe": parkProbe()
-        case "ws":    switchWorkspace(arg)
-        case "move":  moveToWorkspace(arg)
-        case "focus":
-            switch arg {
-            case "left": focus(.left); case "right": focus(.right)
-            case "up": focus(.up); case "down": focus(.down)
-            default: break
-            }
-        default: break
-        }
-    }
-
-    /// Print every AX window per app: subrole, title, frame, and whether we track it.
-    /// This is the ground truth for "why is that window not tiled?".
-    func dumpState() {
-        log("=== DUMP ws=\(store.current) orientation=\(store.orientation) "
-            + "tracked=\(store.byHash.count) trusted=\(AXIsProcessTrusted())")
-        for app in NSWorkspace.shared.runningApplications where app.activationPolicy == .regular {
-            let pid = app.processIdentifier
-            let wins = AX.windows(of: pid)
-            guard !wins.isEmpty else { continue }
-            log("  app \(app.localizedName ?? "?") pid=\(pid) axWindows=\(wins.count)")
-            for el in wins {
-                let title = AX.string(el, kAXTitleAttribute as CFString) ?? ""
-                let sub = AX.string(el, kAXSubroleAttribute as CFString) ?? "(no subrole)"
-                let f = AX.currentFrame(el) ?? .zero
-                let tracked = store.byHash[CFHash(el)] != nil
-                let focused = AX.bool(el, kAXFocusedAttribute as CFString) ?? false
-                log("    [\(sub)] \"\(title.prefix(36))\" "
-                    + "\(Int(f.minX)),\(Int(f.minY)) \(Int(f.width))x\(Int(f.height)) "
-                    + "tracked=\(tracked)" + (focused ? " FOCUSED" : ""))
-            }
-        }
-        log("=== END DUMP")
-    }
-
-    /// Ask for Accessibility, and — if it isn't granted yet — watch for it briefly.
-    ///
-    /// The watcher is deliberately bounded: once a second for one minute, then it stops forever.
-    /// A permanent poll would undo the whole point of an idle-free window manager.
     private func requestAccessibility() {
         if AXIsProcessTrusted() { return }
 
@@ -590,6 +409,34 @@ final class Controller: NSObject {
         setFocus(window)
     }
 
+    // MARK: - quitting
+
+    /// Bring every hidden window back on screen so the Mac is usable once Pulsar is not running.
+    ///
+    /// Placement is saved *before* this runs, so the workspaces are remembered and the next launch
+    /// puts everything back. Windows keep their size; they are only moved into view, cascading so
+    /// they do not sit exactly on top of one another.
+    func unparkAll() {
+        let visible = axVisibleFrame
+        var step: CGFloat = 0
+        for (_, win) in store.byHash {
+            guard let frame = AX.currentFrame(win.el) else { continue }
+            guard isParked(frame, visible: visible) else { continue }
+            let x = visible.minX + min(step, 180)
+            let y = visible.minY + min(step, 140)
+            AX.setPosition(win.el, CGPoint(x: x, y: y))
+            step += 26
+        }
+        log("quit: unparked windows onto the visible screen")
+    }
+
+    /// Save placement, then leave the desktop usable. Called from the menu, SIGTERM and terminate.
+    func prepareForQuit() {
+        saveWork?.cancel()
+        saveState()
+        unparkAll()
+    }
+
     // MARK: - watching individual windows
 
     /// Watch an app's windows directly.
@@ -699,148 +546,6 @@ final class Controller: NSObject {
         return true
     }
 
-    // MARK: - persistence
-
-    /// Stable-enough identity for remembering where a window belongs across launches.
-    ///
-    /// The AXUIElement hash cannot be used: it is only valid for the lifetime of the element. App
-    /// bundle id plus window title survives a relaunch, at the cost that renaming a window (a new
-    /// browser tab, an unsaved document) makes it look like a new window and it lands on the
-    /// current workspace — a safe failure, never a lost window.
-    private func windowKey(_ win: Win) -> String {
-        (win.app.bundleIdentifier ?? "unknown") + "|" + win.title
-    }
-
-    private func appKey(_ win: Win) -> String {
-        win.app.bundleIdentifier ?? "unknown"
-    }
-
-    /// Where this window belonged last time.
-    ///
-    /// Window titles drift constantly — a Slack channel, an unread count, a browser tab — so an
-    /// exact key misses more often than it hits. The per-app fallback is what actually keeps
-    /// placement stable: most apps here have one window per workspace, so "where this app last
-    /// lived" is the right answer when the title no longer matches.
-    private func savedWorkspace(for win: Win) -> String? {
-        guard restoreOnLaunch else { return nil }
-        let defaults = UserDefaults.standard
-        let byTitle = defaults.dictionary(forKey: "windowWorkspaces") as? [String: String]
-        if let hit = byTitle?[windowKey(win)] { return hit }
-
-        let byApp = defaults.dictionary(forKey: "appWorkspaces") as? [String: String]
-        return byApp?[appKey(win)]
-    }
-
-    /// The size the user last gave this window, if any.
-    private func savedWeight(for win: Win) -> CGFloat? {
-        guard restoreOnLaunch else { return nil }
-        let defaults = UserDefaults.standard
-        if let byTitle = defaults.dictionary(forKey: "windowWeights") as? [String: Double],
-           let hit = byTitle[windowKey(win)] {
-            return CGFloat(hit)
-        }
-        if let byApp = defaults.dictionary(forKey: "appWeights") as? [String: Double],
-           let hit = byApp[appKey(win)] {
-            return CGFloat(hit)
-        }
-        return nil
-    }
-
-    private func restoreSavedState() {
-        let defaults = UserDefaults.standard
-        if let restore = defaults.object(forKey: "restoreOnLaunch") as? Bool {
-            restoreOnLaunch = restore
-        }
-        if restoreOnLaunch {
-            if let workspace = defaults.string(forKey: "currentWorkspace"), !workspace.isEmpty {
-                store.current = workspace
-            }
-            if defaults.string(forKey: "orientation") == "v" {
-                store.orientation = .vertical
-            }
-        }
-        if let follow = defaults.object(forKey: "followAppAcrossWorkspaces") as? Bool {
-            followAppAcrossWorkspaces = follow
-        }
-        if let hover = defaults.object(forKey: "focusFollowsMouse") as? Bool {
-            focusFollowsMouse = hover
-        }
-    }
-
-    /// Coalesced so a burst of moves writes once, a second later.
-    private func scheduleSave() {
-        saveWork?.cancel()
-        let work = DispatchWorkItem { [weak self] in self?.saveState() }
-        saveWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0, execute: work)
-    }
-
-    /// Called for changes the user would notice losing: moving a window between workspaces.
-    /// Written straight away, because a crash or a stray duplicate instance must not cost placement.
-    private func saveImmediately() {
-        saveWork?.cancel()
-        saveState()
-    }
-
-    func saveState() {
-        // Until the first refresh has finished, `store` is incomplete and writing it would erase
-        // remembered placements — that is exactly how everything ended up back on one workspace.
-        guard hasCompletedFirstRefresh else { return }
-
-        var map: [String: String] = [:]
-        for (_, win) in store.byHash {
-            map[windowKey(win)] = win.workspace
-        }
-        let defaults = UserDefaults.standard
-        defaults.set(map, forKey: "windowWorkspaces")
-        // Mirror the same information per app, for when a title no longer matches.
-        var byApp: [String: String] = [:]
-        for (_, win) in store.byHash { byApp[appKey(win)] = win.workspace }
-        defaults.set(byApp, forKey: "appWorkspaces")
-
-        // Sizes are remembered too, or a restart would silently restore the even split.
-        var weights: [String: Double] = [:]
-        var appWeights: [String: Double] = [:]
-        for (_, win) in store.byHash {
-            weights[windowKey(win)] = Double(win.weight)
-            appWeights[appKey(win)] = Double(win.weight)
-        }
-        defaults.set(weights, forKey: "windowWeights")
-        defaults.set(appWeights, forKey: "appWeights")
-        defaults.set(store.current, forKey: "currentWorkspace")
-        defaults.set(store.orientation == .horizontal ? "h" : "v", forKey: "orientation")
-    }
-
-    // MARK: - minimum sizes that apps impose on themselves
-
-    /// Seed a freshly discovered window with the minimums already learned for its app, so a restart
-    /// does not have to re-discover them by briefly squeezing the window below its limit.
-    private func seedMinimum(for win: Win) {
-        guard let bundleId = win.app.bundleIdentifier else { return }
-        let defaults = UserDefaults.standard
-        let widths = defaults.dictionary(forKey: "appMinWidths") as? [String: Double] ?? [:]
-        let heights = defaults.dictionary(forKey: "appMinHeights") as? [String: Double] ?? [:]
-        if let w = widths[bundleId] { store.minWidth[win.hash] = CGFloat(w) }
-        if let h = heights[bundleId] { store.minHeight[win.hash] = CGFloat(h) }
-    }
-
-    private func persistMinimum(app: NSRunningApplication, width: CGFloat?, height: CGFloat?) {
-        guard let bundleId = app.bundleIdentifier else { return }
-        let defaults = UserDefaults.standard
-        if let width {
-            var widths = defaults.dictionary(forKey: "appMinWidths") as? [String: Double] ?? [:]
-            widths[bundleId] = Double(width)
-            defaults.set(widths, forKey: "appMinWidths")
-        }
-        if let height {
-            var heights = defaults.dictionary(forKey: "appMinHeights") as? [String: Double] ?? [:]
-            heights[bundleId] = Double(height)
-            defaults.set(heights, forKey: "appMinHeights")
-        }
-    }
-
-    /// A window counts as parked when it sits entirely below the visible area or fully off to the
-    /// left — i.e. at most a pixel of it can be seen.
     private func isParked(_ frame: CGRect, visible: CGRect) -> Bool {
         frame.minY >= visible.maxY - 2 || frame.maxX <= visible.minX + 2
     }
@@ -966,7 +671,7 @@ final class Controller: NSObject {
     ///
     /// Falling straight to (4) is what makes "move" act on the wrong window: with several apps
     /// open, "the first window in the list" is rarely the one the user is looking at.
-    private func focused() -> Win? {
+    func focused() -> Win? {
         let list = store.windows(store.current)
         guard !list.isEmpty else { return nil }
 
@@ -1095,8 +800,7 @@ final class Controller: NSObject {
     }
 
     @objc func quit() {
-        saveWork?.cancel()
-        saveState()          // capture the arrangement as it is right now, not a second ago
+        prepareForQuit()
         NSApp.terminate(nil)
     }
 

@@ -48,7 +48,7 @@ func drawIcon(in size: CGFloat) -> NSBitmapImageRep {
     NSGraphicsContext.saveGraphicsState()
     NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
     NSGraphicsContext.current?.imageInterpolation = .high
-    guard let ctx = NSGraphicsContext.current?.cgContext else { return rep }
+    guard NSGraphicsContext.current != nil else { return rep }
 
     let inset = size * 0.045
     let body = NSRect(x: inset, y: inset, width: size - inset * 2, height: size - inset * 2)
@@ -61,9 +61,6 @@ func drawIcon(in size: CGFloat) -> NSBitmapImageRep {
     ])!.draw(in: squircle, angle: -90)
 
     let centre = NSPoint(x: body.midX, y: body.midY)
-    let beamLength = body.width * 0.55
-    let halfAngle = CGFloat.pi / 30        // narrow cone: a beam, not a spotlight
-    let axis = CGFloat.pi / 4              // two beams on one diagonal
 
     // The mark is the same four-point star as the menu-bar glyph, so the Dock icon and the menu
     // bar read as one product. Same geometry: four long points, four short, inner radius 30%.

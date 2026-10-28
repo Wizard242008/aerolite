@@ -14,7 +14,7 @@ final class Hotkeys {
     private var nextID: UInt32 = 1
     private var handlerInstalled = false
 
-    static let signature: OSType = 0x4145_524C // 'AERL'
+    static let signature: OSType = 0x504C_5352 // 'PLSR'
 
     private init() {}
 

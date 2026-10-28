@@ -7,7 +7,7 @@ import CoreGraphics
 // window manager actually did to windows, as opposed to what it intended to do.
 //
 //   wmpeek            list managed-looking windows
-//   wmpeek --parked   windows parked off-screen (AeroLite hides other workspaces this way)
+//   wmpeek --parked   windows parked off-screen (Pulsar hides other workspaces this way)
 //   wmpeek --check    tiling summary + overlap detection
 
 let args = CommandLine.arguments
@@ -50,7 +50,7 @@ for w in raw {
                     frame: CGRect(x: x, y: y, width: width, height: height), onscreen: onscreen))
 }
 
-// AeroLite parks windows at the bottom-left corner so only ~1 px remains. Detect that shape
+// Pulsar parks windows at the bottom-left corner so only ~1 px remains. Detect that shape
 // rather than looking for a far-off coordinate, which the window server clamps anyway.
 let vis = NSScreen.screens.first?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
 func parkedFrame(_ f: CGRect) -> Bool {

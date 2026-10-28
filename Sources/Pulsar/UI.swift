@@ -220,53 +220,67 @@ extension Controller: NSMenuDelegate {
             return
         }
 
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 360, height: 300),
+        let width: CGFloat = 340
+        let stack = NSStackView()
+        stack.orientation = .vertical
+        stack.alignment = .centerX
+        stack.spacing = 6
+        stack.edgeInsets = NSEdgeInsets(top: 22, left: 22, bottom: 20, right: 22)
+        stack.translatesAutoresizingMaskIntoConstraints = false
+
+        let icon = NSImageView()
+        icon.image = NSApp.applicationIconImage
+        icon.imageScaling = .scaleProportionallyUpOrDown
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            icon.widthAnchor.constraint(equalToConstant: 96),
+            icon.heightAnchor.constraint(equalToConstant: 96),
+        ])
+
+        let name = NSTextField(labelWithString: "Pulsar")
+        name.font = .systemFont(ofSize: 20, weight: .semibold)
+        name.alignment = .center
+
+        let version = NSTextField(labelWithString: "Version \(Updater.currentVersion)")
+        version.font = .systemFont(ofSize: 11)
+        version.textColor = .secondaryLabelColor
+        version.alignment = .center
+
+        let tagline = NSTextField(wrappingLabelWithString:
+            "A tiling window manager for macOS.\nNo polling, no timers, no work when idle.")
+        tagline.font = .systemFont(ofSize: 12)
+        tagline.textColor = .secondaryLabelColor
+        tagline.alignment = .center
+        tagline.preferredMaxLayoutWidth = width - 44
+
+        stack.addArrangedSubview(icon)
+        stack.setCustomSpacing(12, after: icon)
+        stack.addArrangedSubview(name)
+        stack.addArrangedSubview(version)
+        stack.setCustomSpacing(10, after: version)
+        stack.addArrangedSubview(tagline)
+
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 260),
                               styleMask: [.titled, .closable, .fullSizeContentView],
                               backing: .buffered, defer: false)
         window.title = "About Pulsar"
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
         window.isMovableByWindowBackground = true
+        window.contentView = NSView()
+        window.contentView?.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: window.contentView!.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: window.contentView!.trailingAnchor),
+            stack.topAnchor.constraint(equalTo: window.contentView!.topAnchor),
+            stack.bottomAnchor.constraint(lessThanOrEqualTo: window.contentView!.bottomAnchor),
+        ])
+        window.setContentSize(NSSize(width: width, height: stack.fittingSize.height))
         window.center()
-
-        let content = NSView(frame: window.contentLayoutRect)
-
-        let iconView = NSImageView(frame: NSRect(x: 0, y: 0, width: 96, height: 96))
-        iconView.image = NSApp.applicationIconImage
-        iconView.imageScaling = .scaleProportionallyUpOrDown
-
-        func label(_ text: String, size: CGFloat, weight: NSFont.Weight,
-                   color: NSColor, width: CGFloat) -> NSTextField {
-            let field = NSTextField(wrappingLabelWithString: text)
-            field.font = NSFont.systemFont(ofSize: size, weight: weight)
-            field.textColor = color
-            field.alignment = .center
-            field.frame.size.width = width
-            field.isSelectable = false
-            return field
-        }
-
-        let name = label("Pulsar", size: 20, weight: .semibold, color: .labelColor, width: 320)
-        let version = label("Version 1.1  ·  \(store.byHash.count) windows managed",
-                            size: 11, weight: .regular, color: .secondaryLabelColor, width: 320)
-        let tagline = label("A tiling window manager built for speed:\nno polling, no timers, no work when idle.",
-                            size: 12, weight: .regular, color: .secondaryLabelColor, width: 300)
-
-        var y: CGFloat = 250
-        iconView.frame.origin = NSPoint(x: (360 - 96) / 2, y: y - 96)
-        y -= 96 + 14
-        name.frame.origin = NSPoint(x: 20, y: y - 26); y -= 26 + 4
-        version.frame.origin = NSPoint(x: 20, y: y - 16); y -= 16 + 14
-        tagline.frame.origin = NSPoint(x: 30, y: y - 34)
-
-        content.addSubview(iconView)
-        content.addSubview(name)
-        content.addSubview(version)
-        content.addSubview(tagline)
-        window.contentView = content
 
         aboutWindow = window
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
+
 }
