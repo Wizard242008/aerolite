@@ -322,6 +322,13 @@ extension Controller {
             return result
         }
 
+        /// Visible length of a cell, ignoring markdown punctuation.
+        func visibleLength(_ text: String) -> Int {
+            text.replacingOccurrences(of: "**", with: "")
+                .replacingOccurrences(of: "`", with: "")
+                .count
+        }
+
         func append(_ string: NSAttributedString, spacing: NSParagraphStyle) {
             let mutable = NSMutableAttributedString(attributedString: string)
             mutable.addAttribute(.paragraphStyle, value: spacing,
@@ -338,6 +345,7 @@ extension Controller {
         while index < lines.count {
             let line = lines[index]
 
+            if line.hasPrefix("![") { index += 1; continue }      // images have nothing to show here
             if line.hasPrefix("```") { inCode.toggle(); index += 1; continue }
 
             if inCode {
@@ -362,20 +370,24 @@ extension Controller {
                 var widths = [Int](repeating: 0, count: columnCount)
                 for row in rows {
                     for (column, cell) in row.enumerated() where column < columnCount {
-                        widths[column] = max(widths[column], cell.count)
+                        widths[column] = max(widths[column], visibleLength(cell))
                     }
                 }
                 for (rowIndex, row) in rows.enumerated() {
-                    var line = ""
+                    let font = rowIndex == 0
+                        ? NSFont.monospacedSystemFont(ofSize: 11, weight: .semibold)
+                        : NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+                    let color: NSColor = rowIndex == 0 ? .labelColor : .secondaryLabelColor
+
+                    let line = NSMutableAttributedString()
                     for column in 0..<columnCount {
                         let cell = column < row.count ? row[column] : ""
-                        line += cell.padding(toLength: max(widths[column], cell.count), withPad: " ", startingAt: 0)
-                        if column < columnCount - 1 { line += "   " }
+                        line.append(inline(cell, font: font, color: color))
+                        let padding = max(0, widths[column] - visibleLength(cell)) + (column < columnCount - 1 ? 3 : 0)
+                        line.append(NSAttributedString(string: String(repeating: " ", count: padding),
+                                                       attributes: [.font: font]))
                     }
-                    let font = rowIndex == 0 ? NSFont.monospacedSystemFont(ofSize: 11, weight: .semibold) : NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
-                    let color: NSColor = rowIndex == 0 ? .labelColor : .secondaryLabelColor
-                    append(NSAttributedString(string: line, attributes: [.font: font, .foregroundColor: color]),
-                           spacing: style(before: 0, after: rowIndex == rows.count - 1 ? 8 : 0))
+                    append(line, spacing: style(before: 0, after: rowIndex == rows.count - 1 ? 8 : 0))
                 }
                 continue
             }

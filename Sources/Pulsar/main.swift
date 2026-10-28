@@ -34,6 +34,14 @@ if CommandLine.arguments.contains("--diagnose") {
     exit(0)
 }
 
+// Dump the rendered help text, so the Markdown renderer can be inspected without a window server.
+if CommandLine.arguments.contains("--render-help") {
+    let url = Bundle.main.url(forResource: "README", withExtension: "md")
+    let markdown = url.flatMap { try? String(contentsOf: $0, encoding: .utf8) } ?? Controller.fallbackHelp
+    print(Controller.render(markdown).string)
+    exit(0)
+}
+
 // Render the menu-bar glyph to a PNG so its design can be inspected without screen-recording
 // permission (screencapture cannot read the display from a sandboxed shell).
 if let flag = CommandLine.arguments.firstIndex(of: "--render-glyph"),
