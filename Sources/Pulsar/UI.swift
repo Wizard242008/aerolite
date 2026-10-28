@@ -130,6 +130,13 @@ extension Controller: NSMenuDelegate {
         follow.image = symbol("arrow.turn.up.right.diamond")
         menu.addItem(follow)
 
+        let hover = NSMenuItem(title: "Focus Follows Mouse",
+                               action: #selector(toggleFocusFollowsMouse), keyEquivalent: "")
+        hover.target = self
+        hover.state = focusFollowsMouse ? NSControl.StateValue.on : NSControl.StateValue.off
+        hover.image = symbol("cursorarrow")
+        menu.addItem(hover)
+
         let retile = NSMenuItem(title: "Re-tile Now", action: #selector(reloadNow), keyEquivalent: "r")
         retile.target = self
         retile.image = symbol("arrow.triangle.2.circlepath")
@@ -168,6 +175,12 @@ extension Controller: NSMenuDelegate {
     @objc func selectWorkspace(_ sender: NSMenuItem) {
         guard let name = sender.representedObject as? String else { return }
         switchWorkspace(name)
+    }
+
+    @objc func toggleFocusFollowsMouse() {
+        focusFollowsMouse.toggle()
+        UserDefaults.standard.set(focusFollowsMouse, forKey: "focusFollowsMouse")
+        rebuildMenu()
     }
 
     @objc func toggleFollow() {

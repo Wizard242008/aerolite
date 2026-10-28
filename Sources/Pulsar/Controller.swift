@@ -22,6 +22,11 @@ final class Controller: NSObject {
     private var refusalsLogged: Set<CFHashCode> = []
     private weak var lastFocused: Win?
     private var saveWork: DispatchWorkItem?
+    /// Hyprland-style hover focus. Off by default because it wakes the process on mouse movement.
+    var focusFollowsMouse = false { didSet { updateMouseMonitor() } }
+    private var mouseMonitor: Any?
+    private var hoverWork: DispatchWorkItem?
+    private var lastHoverHash: CFHashCode?
     /// When on, activating an app (Dock click, Cmd-Tab) jumps to the workspace holding its window.
     var followAppAcrossWorkspaces = true
     /// Guards persistence against writing an empty map before the first discovery pass finishes.
@@ -64,6 +69,7 @@ final class Controller: NSObject {
         requestAccessibility()
         buildMenuBar()
         registerHotkeys()
+        updateMouseMonitor()
         observeApps()
         NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification,
                                                object: nil, queue: .main) { [weak self] _ in
@@ -159,6 +165,34 @@ final class Controller: NSObject {
             return
         }
         if command == "orient" { toggleOrientation(); return }
+        if command == "hoveron" {
+            focusFollowsMouse = true
+            UserDefaults.standard.set(true, forKey: "focusFollowsMouse")
+            log("focus follows mouse: on")
+            return
+        }
+        if command == "hoveroff" {
+            focusFollowsMouse = false
+            UserDefaults.standard.set(false, forKey: "focusFollowsMouse")
+            log("focus follows mouse: off")
+            return
+        }
+        if command == "hover" {
+            // Warp the pointer over the second window and post a real mouseMoved event, so the
+            // global monitor is exercised exactly as it would be by a hand on the trackpad.
+            guard let screen = NSScreen.screens.first else { return }
+            let windows = store.windows(store.current)
+            guard windows.count > 1 else { log("hover: need 2+ windows"); return }
+            let target = windows[1]
+            let ax = CGPoint(x: target.frame.midX, y: target.frame.midY)
+            let point = CGPoint(x: ax.x, y: screen.frame.height - ax.y)
+            CGWarpMouseCursorPosition(point)
+            CGEvent(mouseEventSource: nil, mouseType: .mouseMoved,
+                    mouseCursorPosition: point, mouseButton: .left)?
+                .post(tap: .cghidEventTap)
+            log("hover: pointer over \(target.title.prefix(24))")
+            return
+        }
 
         let parts = command.split(separator: "-", maxSplits: 1).map(String.init)
         guard parts.count == 2 else {
@@ -304,7 +338,12 @@ final class Controller: NSObject {
                    let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication {
                     self.followActivation(app)
                 }
-                self.scheduleRefresh()
+                if name == NSWorkspace.didActivateApplicationNotification,
+                   let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication {
+                    self.refresh(app: app.processIdentifier)
+                } else {
+                    self.scheduleRefresh()
+                }
             }
             observers.append(token)
         }
@@ -329,7 +368,20 @@ final class Controller: NSObject {
     /// Full-screen windows are deliberately *removed* from management here rather than skipped
     /// later: once a window owns its own Space, any geometry write from us either does nothing or
     /// yanks the user out of full screen.
-    func refresh() {
+    /// Full sweep: every running app. Expensive (~25 Accessibility round trips), so it is reserved
+    /// for start-up and for apps launching or quitting.
+    func refresh() { refresh(only: nil) }
+
+    /// Re-scan a single app. This is what an activation does: the other apps' windows cannot have
+    /// changed just because one app came to the front.
+    func refresh(app pid: pid_t) { refresh(only: pid) }
+
+    private func refresh(only: pid_t?) {
+        let started = CFAbsoluteTimeGetCurrent()
+        defer {
+            let ms = (CFAbsoluteTimeGetCurrent() - started) * 1000
+            if ms > 8 { log(String(format: "refresh took %.1f ms", ms)) }
+        }
         guard enabled else { return }
 
         var live = Set<CFHashCode>()
@@ -339,6 +391,7 @@ final class Controller: NSObject {
             guard app.activationPolicy == .regular,
                   app.processIdentifier != getpid() else { continue }
             let pid = app.processIdentifier
+            if let only, only != pid { continue }
             for el in AX.windows(of: pid) {
                 let hash = CFHash(el)
 
@@ -373,9 +426,12 @@ final class Controller: NSObject {
         for win in discovered {
             store.add(win, to: win.workspace)
         }
-        store.prune(live: live)
-
-        parkOtherWorkspaces()
+        if only == nil {
+            store.prune(live: live)
+            // Parking costs a read per window on other workspaces; only worth re-verifying when the
+            // window set may actually have changed.
+            parkOtherWorkspaces()
+        }
         apply()
         hasCompletedFirstRefresh = true
         scheduleSave()
@@ -485,6 +541,59 @@ final class Controller: NSObject {
         setFocus(window)
     }
 
+    // MARK: - focus follows mouse
+
+    /// A global monitor is only installed while the feature is on: with it off, the app must not
+    /// wake for mouse movement at all.
+    private func updateMouseMonitor() {
+        if let monitor = mouseMonitor {
+            NSEvent.removeMonitor(monitor)
+            mouseMonitor = nil
+        }
+        guard focusFollowsMouse else { return }
+
+        mouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved]) { [weak self] _ in
+            self?.scheduleHoverFocus()
+        }
+    }
+
+    /// Coalesce movement: crossing three windows in a flick should cost one focus change, not three.
+    private func scheduleHoverFocus() {
+        hoverWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.hoverFocus() }
+        hoverWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.10, execute: work)
+    }
+
+    private func hoverFocus() {
+        guard enabled, focusFollowsMouse else { return }
+        guard NSEvent.pressedMouseButtons == 0 else { return }   // never steal focus mid-drag
+        _ = focusWindowUnderCursor()
+    }
+
+    /// Focus the window under the pointer, if it is on the current workspace.
+    ///
+    /// The layout is non-overlapping, so the pointer can only be inside one pane — the pick is
+    /// deterministic and there is no stacking order to reason about.
+    @discardableResult
+    private func focusWindowUnderCursor() -> Bool {
+        guard let screen = NSScreen.screens.first ?? NSScreen.main else { return false }
+        let pointer = NSEvent.mouseLocation
+        // NSEvent uses bottom-left origin, Accessibility uses top-left.
+        let point = CGPoint(x: pointer.x, y: screen.frame.height - pointer.y)
+
+        let windows = store.windows(store.current)
+        guard let hit = windows.first(where: { $0.frame.contains(point) }) else { return false }
+        guard hit.hash != lastHoverHash else { return true }
+        lastHoverHash = hit.hash
+
+        if AX.bool(hit.el, kAXFocusedAttribute as CFString) != true {
+            setFocus(hit)
+            log("focus follows mouse: \(hit.title.prefix(28))")
+        }
+        return true
+    }
+
     // MARK: - persistence
 
     /// Stable-enough identity for remembering where a window belongs across launches.
@@ -540,6 +649,9 @@ final class Controller: NSObject {
         }
         if let follow = defaults.object(forKey: "followAppAcrossWorkspaces") as? Bool {
             followAppAcrossWorkspaces = follow
+        }
+        if let hover = defaults.object(forKey: "focusFollowsMouse") as? Bool {
+            focusFollowsMouse = hover
         }
     }
 
@@ -804,10 +916,17 @@ final class Controller: NSObject {
 
     func switchWorkspace(_ name: String) {
         guard store.current != name else { return }
+        let started = CFAbsoluteTimeGetCurrent()
+        defer {
+            let ms = (CFAbsoluteTimeGetCurrent() - started) * 1000
+            log(String(format: "switch %@ took %.1f ms", name, ms))
+        }
         store.current = name
         saveImmediately()
+        // No rescan: the set of windows did not change, only which ones are visible.
+        parkOtherWorkspaces()
         apply()
-        refresh()
+        if focusFollowsMouse, focusWindowUnderCursor() { return }
         if let first = store.windows(name).first { setFocus(first) }
     }
 
@@ -823,7 +942,9 @@ final class Controller: NSObject {
         lastFocused = win
         AX.setBool(win.el, kAXMainAttribute as CFString, true)
         AX.setBool(win.el, kAXFocusedAttribute as CFString, true)
-        win.app.activate(options: [])
+        // activate() is a ~10-20 ms trip through LaunchServices; skip it when the app is already
+        // in front, which is the common case when moving focus inside one app.
+        if !win.app.isActive { win.app.activate(options: []) }
     }
 
     // MARK: - menu bar

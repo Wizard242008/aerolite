@@ -79,6 +79,11 @@ switch workspaces. Everything else is keyboard:
 Clicking an app in the Dock, or switching to it with Cmd-Tab, jumps to the workspace holding its
 window. Turn that off with **Follow App to Its Workspace** in the menu.
 
+**Focus Follows Mouse** in the menu gives Hyprland-style hover focus: moving the pointer over a
+window focuses it, and entering a workspace focuses the pane under the pointer. It costs nothing
+while the mouse is still (0 wakeups/s); it only does work when the pointer actually moves. Turn it
+off if you prefer focus to stay where the keyboard put it.
+
 ## Behaviour
 
 - **One window fills the screen, two split it, three or more form a grid.** Designed for a small
