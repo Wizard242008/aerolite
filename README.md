@@ -12,7 +12,7 @@
   <img src="https://img.shields.io/badge/macOS-13%2B-blue" alt="macOS 13+">
   <img src="https://img.shields.io/badge/Apple%20silicon-arm64-blue" alt="Apple silicon">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT">
-  <img src="https://img.shields.io/badge/version-2.0.2-lightgrey" alt="2.0.2">
+  <img src="https://img.shields.io/badge/version-2.0.3-lightgrey" alt="2.0.3">
 </p>
 
 ---
@@ -90,6 +90,9 @@ Until it is granted the app cannot read or move windows, so nothing will happen.
 | `alt` + `a`…`z` (except `h j k l`) | switch to that lettered workspace |
 | `alt` + `Shift` + letter | send the focused window to that workspace |
 
+The menu's **Hotkeys** submenu lists every binding and follows the modifier chosen in Settings. Its
+items also work when clicked, so the menu and the keyboard stay in step.
+
 Clicking an app in the Dock, or reaching it with Cmd-Tab, jumps to the workspace that holds its
 window.
 
@@ -102,7 +105,7 @@ window.
 | Follow an app to its workspace | clicking an app jumps to the workspace holding its window |
 | Focus follows mouse | hovering focuses a window, and entering a workspace focuses the pane under the pointer |
 | Restore my layout at launch | windows return to their workspaces on launch; off means everything starts on one |
-| Modifier for all shortcuts | moves the whole scheme from `alt` to `control` or `command`, applied immediately |
+| Modifier for all shortcuts | moves the whole scheme from `alt` to `control` or `command`, applied immediately; the Hotkeys menu updates to match |
 | Check for Updates | runs an update check on demand |
 | Show Log | opens `~/Library/Logs/Pulsar.log` |
 

@@ -158,6 +158,9 @@ extension Controller {
                               styleMask: [.titled, .closable],
                               backing: .buffered, defer: false)
         window.title = "Pulsar Settings"
+        // Retained by the controller, so closing must not deallocate it — otherwise the next open
+        // messages freed memory and the app dies with an unrecognised selector.
+        window.isReleasedWhenClosed = false
         window.contentView = NSView()
         window.contentView?.addSubview(stack)
         NSLayoutConstraint.activate([
@@ -280,6 +283,7 @@ extension Controller {
                               styleMask: [.titled, .closable, .resizable],
                               backing: .buffered, defer: false)
         window.title = "Pulsar Help"
+        window.isReleasedWhenClosed = false
         window.center()
 
         // Built explicitly: storage → layout manager → container → view. The convenience
@@ -293,11 +297,17 @@ extension Controller {
 
         let textView = NSTextView(frame: NSRect(x: 0, y: 0, width: 680, height: 620),
                                   textContainer: container)
+        textView.minSize = NSSize(width: 0, height: 0)
+        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
         textView.isEditable = false
         textView.isSelectable = true
         textView.drawsBackground = false
         textView.textContainerInset = NSSize(width: 18, height: 18)
         textView.autoresizingMask = NSView.AutoresizingMask.width
+        container.widthTracksTextView = true
+        container.containerSize = NSSize(width: 680, height: CGFloat.greatestFiniteMagnitude)
 
         let markdown = (Bundle.main.url(forResource: "README", withExtension: "md")
             .flatMap { try? String(contentsOf: $0, encoding: .utf8) })

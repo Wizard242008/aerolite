@@ -62,7 +62,7 @@ extension Controller: NSMenuDelegate {
         rebuildMenu()
     }
 
-    private func rebuildMenu() {
+    func rebuildMenu() {
         guard let menu = statusItem?.menu else { return }
         menu.removeAllItems()
 
@@ -112,6 +112,8 @@ extension Controller: NSMenuDelegate {
             action: #selector(toggleOrientationFromMenu), keyEquivalent: "/"
         )
         layoutItem.target = self
+        layoutItem.keyEquivalentModifierMask = [hotkeyModifierName == "control" ? .control
+                                                : hotkeyModifierName == "command" ? .command : .option]
         layoutItem.image = symbol(store.orientation == .horizontal
                                   ? "rectangle.split.2x1"
                                   : "rectangle.split.1x2")
@@ -153,6 +155,69 @@ extension Controller: NSMenuDelegate {
             menu.addItem(.separator())
         }
 
+        // Hotkeys: enabled items that also work when clicked, so the menu is an accurate mirror of
+        // the current binding set (it is rebuilt every time the menu opens).
+        let hotkeysItem = NSMenuItem(title: "Hotkeys", action: nil, keyEquivalent: "")
+        hotkeysItem.image = symbol("keyboard")
+        let hotkeysMenu = NSMenu()
+        let modMask: NSEvent.ModifierFlags = {
+            switch hotkeyModifierName {
+            case "control": return .control
+            case "command": return .command
+            default:        return .option
+            }
+        }()
+
+        func binding(_ title: String, key: String, shift: Bool, action: Selector,
+                     represented: Any? = nil) -> NSMenuItem {
+            let item = NSMenuItem(title: title, action: action, keyEquivalent: key)
+            item.target = self
+            item.keyEquivalentModifierMask = shift ? [modMask, .shift] : [modMask]
+            item.representedObject = represented
+            return item
+        }
+
+        hotkeysMenu.addItem(binding("Focus Left", key: "h", shift: false, action: #selector(menuFocusLeft)))
+        hotkeysMenu.addItem(binding("Focus Down", key: "j", shift: false, action: #selector(menuFocusDown)))
+        hotkeysMenu.addItem(binding("Focus Up", key: "k", shift: false, action: #selector(menuFocusUp)))
+        hotkeysMenu.addItem(binding("Focus Right", key: "l", shift: false, action: #selector(menuFocusRight)))
+        hotkeysMenu.addItem(.separator())
+        hotkeysMenu.addItem(binding("Move Left", key: "h", shift: true, action: #selector(menuMoveLeft)))
+        hotkeysMenu.addItem(binding("Move Down", key: "j", shift: true, action: #selector(menuMoveDown)))
+        hotkeysMenu.addItem(binding("Move Up", key: "k", shift: true, action: #selector(menuMoveUp)))
+        hotkeysMenu.addItem(binding("Move Right", key: "l", shift: true, action: #selector(menuMoveRight)))
+        hotkeysMenu.addItem(.separator())
+        hotkeysMenu.addItem(binding("Shrink Window", key: "-", shift: false, action: #selector(menuShrink)))
+        hotkeysMenu.addItem(binding("Grow Window", key: "=", shift: false, action: #selector(menuGrow)))
+        hotkeysMenu.addItem(binding("Toggle Layout", key: "/", shift: false, action: #selector(menuToggleLayout)))
+        hotkeysMenu.addItem(.separator())
+
+        let hotkeyWorkspaces = NSMenuItem(title: "Switch Workspace", action: nil, keyEquivalent: "")
+        let hotkeyWorkspaceMenu = NSMenu()
+        for n in 1...9 {
+            hotkeyWorkspaceMenu.addItem(binding("\(n)", key: "\(n)", shift: false,
+                                                action: #selector(menuSwitchWorkspace), represented: "\(n)"))
+        }
+        for letter in "abcdefghijklmnopqrstuvwxyz" where !"hjkl".contains(letter) {
+            hotkeyWorkspaceMenu.addItem(binding(String(letter), key: String(letter), shift: false,
+                                                action: #selector(menuSwitchWorkspace),
+                                                represented: String(letter)))
+        }
+        hotkeyWorkspaces.submenu = hotkeyWorkspaceMenu
+        hotkeysMenu.addItem(hotkeyWorkspaces)
+
+        let sendItem = NSMenuItem(title: "Send Window to Workspace", action: nil, keyEquivalent: "")
+        let sendMenu = NSMenu()
+        for n in 1...9 {
+            sendMenu.addItem(binding("\(n)", key: "\(n)", shift: true,
+                                     action: #selector(menuSendToWorkspace), represented: "\(n)"))
+        }
+        sendItem.submenu = sendMenu
+        hotkeysMenu.addItem(sendItem)
+
+        hotkeysItem.submenu = hotkeysMenu
+        menu.addItem(hotkeysItem)
+
         let settings = NSMenuItem(title: "Settings…", action: #selector(showSettings), keyEquivalent: ",")
         settings.target = self
         settings.image = symbol("gearshape")
@@ -176,6 +241,8 @@ extension Controller: NSMenuDelegate {
         about.image = symbol("info.circle")
         menu.addItem(about)
 
+        menu.addItem(.separator())
+
         let quit = NSMenuItem(title: "Quit Pulsar", action: #selector(quit), keyEquivalent: "q")
         quit.target = self
         menu.addItem(quit)
@@ -193,6 +260,30 @@ extension Controller: NSMenuDelegate {
     @objc func selectWorkspace(_ sender: NSMenuItem) {
         guard let name = sender.representedObject as? String else { return }
         switchWorkspace(name)
+    }
+
+    // Menu mirrors of the keyboard commands. The Carbon hotkey fires first for the same
+    // combination, so these exist for clicking and for showing the current bindings.
+    @objc func menuFocusLeft()  { focus(.left) }
+    @objc func menuFocusRight() { focus(.right) }
+    @objc func menuFocusUp()    { focus(.up) }
+    @objc func menuFocusDown()  { focus(.down) }
+    @objc func menuMoveLeft()   { move(.left) }
+    @objc func menuMoveRight()  { move(.right) }
+    @objc func menuMoveUp()     { move(.up) }
+    @objc func menuMoveDown()   { move(.down) }
+    @objc func menuShrink()     { resize(grow: false) }
+    @objc func menuGrow()       { resize(grow: true) }
+    @objc func menuToggleLayout() { toggleOrientation() }
+
+    @objc func menuSwitchWorkspace(_ sender: NSMenuItem) {
+        guard let name = sender.representedObject as? String else { return }
+        switchWorkspace(name)
+    }
+
+    @objc func menuSendToWorkspace(_ sender: NSMenuItem) {
+        guard let name = sender.representedObject as? String else { return }
+        moveToWorkspace(name)
     }
 
     @objc func toggleFocusFollowsMouse() {
@@ -265,6 +356,7 @@ extension Controller: NSMenuDelegate {
                               styleMask: [.titled, .closable, .fullSizeContentView],
                               backing: .buffered, defer: false)
         window.title = "About Pulsar"
+        window.isReleasedWhenClosed = false
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
         window.isMovableByWindowBackground = true

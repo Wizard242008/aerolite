@@ -28,6 +28,13 @@ final class Controller: NSObject {
     /// two, because a Space transition makes every Accessibility query come back empty for a
     /// moment — and treating that as "all windows closed" wiped the entire layout.
     var missedScans: [CFHashCode: Int] = [:]
+    /// Time of the last Space change. While this is recent, Accessibility answers are unreliable:
+    /// a full-screen transition makes every app report zero windows, so nothing may be pruned.
+    var spaceChangeAt = Date.distantPast
+
+    private var inSpaceTransition: Bool {
+        Date().timeIntervalSince(spaceChangeAt) < 1.2
+    }
     private weak var lastFocused: Win?
     var saveWork: DispatchWorkItem?
     /// Hyprland-style hover focus. Off by default because it wakes the process on mouse movement.
@@ -205,6 +212,7 @@ final class Controller: NSObject {
                    let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication {
                     self.refresh(app: app.processIdentifier)
                 } else if name == NSWorkspace.activeSpaceDidChangeNotification {
+                    self.spaceChangeAt = Date()
                     // Scanning mid-transition returns empty window lists; wait for the animation.
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
                         self?.refresh()
@@ -253,6 +261,7 @@ final class Controller: NSObject {
         guard enabled else { return }
 
         var live = Set<CFHashCode>()
+        var responsive = Set<pid_t>()
         var discovered: [Win] = []
 
         for app in NSWorkspace.shared.runningApplications {
@@ -261,7 +270,9 @@ final class Controller: NSObject {
             let pid = app.processIdentifier
             if let only, only != pid { continue }
             ensureObserver(for: app)
-            for el in AX.windows(of: pid) {
+            let appWindows = AX.windows(of: pid)
+            if !appWindows.isEmpty { responsive.insert(pid) }
+            for el in appWindows {
                 let hash = CFHash(el)
 
                 if AX.isFullScreen(el) {
@@ -295,10 +306,16 @@ final class Controller: NSObject {
         for win in discovered {
             store.add(win, to: win.workspace)
         }
+        if inSpaceTransition {
+            // Windows stay tracked through the transition; the delayed refresh that follows it does
+            // the pruning with reliable data.
+            apply()
+            return
+        }
         if let only {
-            pruneResilient(live: live, pid: only)
+            pruneResilient(live: live, pid: only, responsive: responsive)
         } else {
-            pruneResilient(live: live, pid: nil)
+            pruneResilient(live: live, pid: nil, responsive: responsive)
 
         // Forget observers whose app is gone.
         let livePids = Set(NSWorkspace.shared.runningApplications.map(\.processIdentifier))
@@ -327,8 +344,9 @@ final class Controller: NSObject {
     /// A full-screen transition, a Space switch or a busy app can make `AXWindows` return nothing
     /// for a moment. Two consecutive misses are required before a window is forgotten, and a window
     /// that reports itself full-screen is removed immediately because that is deliberate.
-    private func pruneResilient(live: Set<CFHashCode>, pid: pid_t?) {
+    private func pruneResilient(live: Set<CFHashCode>, pid: pid_t?, responsive: Set<pid_t>) {
         var doomed: [Win] = []
+        var needsConfirmation = false
         for (hash, win) in store.byHash {
             if let pid, win.pid != pid { continue }
             if live.contains(hash) {
@@ -339,13 +357,31 @@ final class Controller: NSObject {
                 doomed.append(win)
                 continue
             }
+            // If the owning app answered this scan with at least one window, then it is alive and
+            // talking to us — so this particular window really has closed, and its pane must be
+            // released immediately or the other windows never expand into the gap.
+            if responsive.contains(win.pid) || NSRunningApplication(processIdentifier: win.pid) == nil {
+                doomed.append(win)
+                continue
+            }
             let misses = (missedScans[hash] ?? 0) + 1
             missedScans[hash] = misses
-            if misses >= 2 { doomed.append(win) }
+            if misses >= 2 {
+                doomed.append(win)
+            } else {
+                needsConfirmation = true
+            }
         }
         for win in doomed {
             store.remove(win)
             missedScans[win.hash] = nil
+        }
+        // A single miss means "the scan may have failed"; confirm quickly rather than waiting for
+        // the next unrelated event, so a closed window never leaves a permanent hole.
+        if needsConfirmation {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+                self?.refresh()
+            }
         }
     }
 
@@ -454,16 +490,41 @@ final class Controller: NSObject {
     /// they do not sit exactly on top of one another.
     func unparkAll() {
         let visible = axVisibleFrame
-        var step: CGFloat = 0
-        for (_, win) in store.byHash {
-            guard let frame = AX.currentFrame(win.el) else { continue }
-            guard isParked(frame, visible: visible) else { continue }
-            let x = visible.minX + min(step, 180)
-            let y = visible.minY + min(step, 140)
-            AX.setPosition(win.el, CGPoint(x: x, y: y))
-            step += 26
+        // Active app last, so it occupies the front slot of the cascade and stays fully visible.
+        let windows = Array(store.byHash.values).sorted {
+            let left = $0.app.isActive ? 1 : 0
+            let right = $1.app.isActive ? 1 : 0
+            if left != right { return left < right }
+            return ($0.app.localizedName ?? "") < ($1.app.localizedName ?? "")
         }
-        log("quit: unparked windows onto the visible screen")
+        guard !windows.isEmpty else { return }
+
+        // A grid cannot be used here: apps have minimum sizes (Hermes refuses under 620 pt tall),
+        // so four panes on a 1019 pt screen would necessarily overlap. Quitting therefore cascades
+        // with a real offset — every window keeps a visible title bar and a usable body, and each
+        // stays fully on screen.
+        // Size the windows so the whole cascade fits: window + cascade span + two margins must
+        // equal the screen, otherwise the last ones clamp to the bottom edge and pile up again.
+        let step: CGFloat = 48
+        let margin: CGFloat = 24
+        let span = step * CGFloat(max(0, windows.count - 1))
+        let base = CGRect(x: visible.minX + margin,
+                          y: visible.minY + margin,
+                          width: visible.width - 2 * margin - span,
+                          height: visible.height - 2 * margin - span)
+        for (index, win) in windows.enumerated() {
+            var frame = base.offsetBy(dx: step * CGFloat(index), dy: step * CGFloat(index))
+            if frame.maxX > visible.maxX { frame.origin.x = visible.maxX - frame.width }
+            if frame.maxY > visible.maxY { frame.origin.y = visible.maxY - frame.height }
+            if frame.minX < visible.minX { frame.origin.x = visible.minX }
+            if frame.minY < visible.minY { frame.origin.y = visible.minY }
+            AX.setFrame(win.el, frame)
+            win.frame = frame
+            // Position alone does not decide stacking: raise each in turn so every cascade step
+            // is actually in front of the one before it, not buried under another app.
+            AX.raise(win.el)
+        }
+        log("quit: cascaded \(windows.count) windows")
     }
 
     /// Save placement, then leave the desktop usable. Called from the menu, SIGTERM and terminate.

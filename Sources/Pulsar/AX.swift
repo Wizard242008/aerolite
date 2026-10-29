@@ -64,6 +64,11 @@ enum AX {
     }
 
     @discardableResult
+    /// Bring a window to the front of its app's window stack without activating the app.
+    static func raise(_ el: AXUIElement) {
+        AXUIElementPerformAction(el, kAXRaiseAction as CFString)
+    }
+
     static func setBool(_ el: AXUIElement, _ name: CFString, _ value: Bool) -> Bool {
         AXUIElementSetAttributeValue(el, name, value as CFBoolean) == .success
     }

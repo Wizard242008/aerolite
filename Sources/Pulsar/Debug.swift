@@ -80,6 +80,25 @@ extension Controller {
             return
         }
         if command == "orient" { toggleOrientation(); return }
+        if command == "menudump" {
+            guard let menu = statusItem?.menu else { log("menudump: no menu"); return }
+            rebuildMenu()
+            func walk(_ menu: NSMenu, depth: Int) {
+                for item in menu.items {
+                    let mods = item.keyEquivalentModifierMask
+                    var glyphs = ""
+                    if mods.contains(.control) { glyphs += "^" }
+                    if mods.contains(.option)  { glyphs += "~" }
+                    if mods.contains(.shift)   { glyphs += "S" }
+                    if mods.contains(.command) { glyphs += "@" }
+                    let key = item.keyEquivalent.isEmpty ? "" : " [\(glyphs)\(item.keyEquivalent)]"
+                    log("  \(String(repeating: "  ", count: depth))\(item.title)\(key)")
+                    if let sub = item.submenu { walk(sub, depth: depth + 1) }
+                }
+            }
+            walk(menu, depth: 0)
+            return
+        }
         if command == "settings" { showSettings(); return }
         if command == "about" { showAboutPanel(); return }
         if command == "menu" {
