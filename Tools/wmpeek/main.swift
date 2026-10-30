@@ -27,6 +27,17 @@ if let flag = args.firstIndex(of: "--ids"), args.count > flag + 1 {
     }
     exit(0)
 }
+// --visible: the usable screen area in the same top-left origin coordinates Accessibility uses.
+if args.contains("--visible") {
+    let vf = NSScreen.screens.first?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
+    let screenHeight = NSScreen.screens.first?.frame.height ?? vf.maxY
+    let obj: [String: Double] = ["x": Double(vf.minX), "y": Double(screenHeight - vf.maxY),
+                                 "w": Double(vf.width), "h": Double(vf.height)]
+    if let data = try? JSONSerialization.data(withJSONObject: obj),
+       let text = String(data: data, encoding: .utf8) { print(text) }
+    exit(0)
+}
+
 let parkedMode = args.contains("--parked")
 let checkMode = args.contains("--check")
 
@@ -75,6 +86,20 @@ func parkedFrame(_ f: CGRect) -> Bool {
 let parked = rows.filter { parkedFrame($0.frame) }
 // Only windows the window server says are actually displayed can overlap in front of the user.
 let onscreen = rows.filter { !parkedFrame($0.frame) && $0.onscreen }
+
+if args.contains("--json") {
+    let objects = rows.map { r -> [String: Any] in
+        ["owner": r.owner, "pid": Int(r.pid), "title": r.name,
+         "x": Int(r.frame.minX), "y": Int(r.frame.minY),
+         "w": Int(r.frame.width), "h": Int(r.frame.height),
+         "onscreen": r.onscreen, "parked": parkedFrame(r.frame)]
+    }
+    if let data = try? JSONSerialization.data(withJSONObject: objects, options: [.sortedKeys]),
+       let text = String(data: data, encoding: .utf8) {
+        print(text)
+    }
+    exit(0)
+}
 
 if parkedMode {
     print("parked windows: \(parked.count)")

@@ -80,6 +80,31 @@ extension Controller {
             return
         }
         if command == "orient" { toggleOrientation(); return }
+        if command == "axraw" {
+            // What the Accessibility layer really returns, before any filtering: used to tell a
+            // window the manager refuses from a window the system never offered.
+            for app in NSWorkspace.shared.runningApplications where app.activationPolicy == .regular {
+                let el = AXUIElementCreateApplication(app.processIdentifier)
+                var value: CFTypeRef?
+                let err = AXUIElementCopyAttributeValue(el, kAXWindowsAttribute as CFString, &value)
+                let list = value as? [AXUIElement] ?? []
+                if list.isEmpty && err != .success { continue }
+                log("axraw \(app.localizedName ?? "?") pid=\(app.processIdentifier) count=\(list.count) err=\(err.rawValue)")
+                for w in list {
+                    func attr(_ name: String) -> String {
+                        var v: CFTypeRef?
+                        AXUIElementCopyAttributeValue(w, name as CFString, &v)
+                        if let s = v as? String { return s }
+                        if let n = v as? NSNumber { return n.stringValue }
+                        return "nil"
+                    }
+                    var settable: DarwinBoolean = false
+                    AXUIElementIsAttributeSettable(w, kAXPositionAttribute as CFString, &settable)
+                    log("    role=\(attr(kAXRoleAttribute)) sub=\(attr(kAXSubroleAttribute)) min=\(attr(kAXMinimizedAttribute)) movable=\(settable.boolValue) title=\(attr(kAXTitleAttribute))")
+                }
+            }
+            return
+        }
         if command == "menudump" {
             guard let menu = statusItem?.menu else { log("menudump: no menu"); return }
             rebuildMenu()
@@ -99,6 +124,7 @@ extension Controller {
             walk(menu, depth: 0)
             return
         }
+        if command == "dump" { dumpState(); return }
         if command == "settings" { showSettings(); return }
         if command == "about" { showAboutPanel(); return }
         if command == "menu" {

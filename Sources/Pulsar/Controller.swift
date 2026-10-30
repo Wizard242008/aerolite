@@ -294,9 +294,13 @@ final class Controller: NSObject {
                     let win = Win(el: el, pid: pid, app: app, workspace: store.current)
                     win.frame = AX.currentFrame(el) ?? .zero
                     seedMinimum(for: win)
-                    // Put the window back where it was last time, not blindly on the current
-                    // workspace. This is what makes a restart feel like nothing moved.
-                    if let remembered = savedWorkspace(for: win) { win.workspace = remembered }
+                    // Restoring at launch puts a window back where it was last time; a window
+                    // opened later belongs where the user is now. Using the remembered workspace
+                    // for both meant a new window appeared on some other desktop — parked, so
+                    // opening it looked like nothing happened.
+                    if !hasCompletedFirstRefresh, let remembered = savedWorkspace(for: win) {
+                        win.workspace = remembered
+                    }
                     if let weight = savedWeight(for: win) { win.weight = weight }
                     discovered.append(win)
                 }
@@ -355,6 +359,13 @@ final class Controller: NSObject {
             }
             if AX.isFullScreen(win.el) {
                 doomed.append(win)
+                continue
+            }
+            // A hidden app reports no windows at all, which is not the same as having closed them.
+            // Forgetting them here meant Cmd-H lost the window's workspace, and unhiding dumped it
+            // onto whatever workspace happened to be current.
+            if win.app.isHidden {
+                missedScans[hash] = 0
                 continue
             }
             // If the owning app answered this scan with at least one window, then it is alive and
@@ -588,6 +599,16 @@ final class Controller: NSObject {
         }
         appRefreshWork[pid] = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.04, execute: work)
+
+        // A freshly created window is often not readable yet when the notification arrives: the
+        // element exists before it has a title, a frame or a settable position, so the scan that
+        // runs 40 ms later can miss it and no second notification ever comes. Re-scan once the
+        // window has settled.
+        if notification == (kAXWindowCreatedNotification as String) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak self] in
+                self?.refresh(app: pid)
+            }
+        }
     }
 
     // MARK: - focus follows mouse
@@ -657,7 +678,12 @@ final class Controller: NSObject {
         guard enabled else { return }
         let rect = axVisibleFrame
         let current = store.windows(store.current)
-        guard !current.isEmpty else { return }
+        if current.isEmpty {
+            // Nothing to tile here, but other workspaces are still hidden: bailing out early left
+            // their windows sitting over this one.
+            parkOtherWorkspaces()
+            return
+        }
 
         // 1–2 windows: a plain split (this is how the machine is actually used).
         // 3+: a grid. Slicing one row thin enough for 7 windows drops panes below the minimum
@@ -749,6 +775,10 @@ final class Controller: NSObject {
                 }
             }
         }
+
+        // Every path through apply ends here, including the targeted refresh that runs when a
+        // window is created, so windows belonging to other workspaces are always hidden again.
+        parkOtherWorkspaces()
 
         // Re-lay out with what we just learned. Bounded: each retry either reduces the column count
         // or is the last one, so this cannot spin.
