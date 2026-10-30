@@ -53,6 +53,7 @@ extension Controller {
     }
 
     func restoreSavedState() {
+        recoverMapIfEmpty()
         let defaults = UserDefaults.standard
         if let restore = defaults.object(forKey: "restoreOnLaunch") as? Bool {
             restoreOnLaunch = restore
@@ -90,31 +91,60 @@ extension Controller {
 
     func saveState() {
         // Until the first refresh has finished, `store` is incomplete and writing it would erase
-        // remembered placements — that is exactly how everything ended up back on one workspace.
+        // remembered placements.
         guard hasCompletedFirstRefresh else { return }
 
-        var map: [String: String] = [:]
-        for (_, win) in store.byHash {
-            map[windowKey(win)] = win.workspace
+        // An empty snapshot means the scan failed (a Space transition, a busy app), not that every
+        // window closed. Writing it would wipe the map — which is exactly how every window ended up
+        // adopted onto one workspace after a restart.
+        guard !store.byHash.isEmpty else {
+            log("save: skipped — no windows tracked, keeping the saved map")
+            return
         }
-        let defaults = UserDefaults.standard
-        defaults.set(map, forKey: "windowWorkspaces")
-        // Mirror the same information per app, for when a title no longer matches.
-        var byApp: [String: String] = [:]
-        for (_, win) in store.byHash { byApp[appKey(win)] = win.workspace }
-        defaults.set(byApp, forKey: "appWorkspaces")
 
-        // Sizes are remembered too, or a restart would silently restore the even split.
-        var weights: [String: Double] = [:]
-        var appWeights: [String: Double] = [:]
+        let defaults = UserDefaults.standard
+
+        // MERGE, never replace. Entries for windows that are merely absent from this snapshot —
+        // another workspace's window, a scan that missed an app — must survive, because they are the
+        // only record of where those windows belong.
+        var windows = defaults.dictionary(forKey: "windowWorkspaces") as? [String: String] ?? [:]
+        var apps = defaults.dictionary(forKey: "appWorkspaces") as? [String: String] ?? [:]
+        var weights = defaults.dictionary(forKey: "windowWeights") as? [String: Double] ?? [:]
+        var appWeights = defaults.dictionary(forKey: "appWeights") as? [String: Double] ?? [:]
+
+        // Keep the previous generation, so a bad save can be undone at the next launch.
+        defaults.set(apps, forKey: "appWorkspaces.previous")
+        defaults.set(windows, forKey: "windowWorkspaces.previous")
+
         for (_, win) in store.byHash {
-            weights[windowKey(win)] = Double(win.weight)
+            let key = windowKey(win)
+            windows[key] = win.workspace
+            apps[appKey(win)] = win.workspace
+            weights[key] = Double(win.weight)
             appWeights[appKey(win)] = Double(win.weight)
         }
+
+        // Titles drift forever; cap the history so the file cannot grow without bound.
+        if windows.count > 400 { windows = windows.filter { weights[$0.key] != nil || $0.value == store.current } }
+
+        defaults.set(windows, forKey: "windowWorkspaces")
+        defaults.set(apps, forKey: "appWorkspaces")
         defaults.set(weights, forKey: "windowWeights")
         defaults.set(appWeights, forKey: "appWeights")
         defaults.set(store.current, forKey: "currentWorkspace")
         defaults.set(store.orientation == .horizontal ? "h" : "v", forKey: "orientation")
+    }
+
+    /// If the map was erased by an earlier build, put the last good generation back.
+    func recoverMapIfEmpty() {
+        let defaults = UserDefaults.standard
+        let apps = defaults.dictionary(forKey: "appWorkspaces") as? [String: String] ?? [:]
+        guard apps.isEmpty else { return }
+        if let previous = defaults.dictionary(forKey: "appWorkspaces.previous") as? [String: String],
+           !previous.isEmpty {
+            defaults.set(previous, forKey: "appWorkspaces")
+            log("recovered appWorkspaces from the previous generation (\(previous.count) apps)")
+        }
     }
 
     // MARK: - minimum sizes that apps impose on themselves
