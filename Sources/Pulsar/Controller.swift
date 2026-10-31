@@ -39,6 +39,13 @@ final class Controller: NSObject {
     var recentlyLost: [CFHashCode: (workspace: String, at: Date)] = [:]
     private let lostGrace: TimeInterval = 600
 
+    /// When the app started. Windows that turn up shortly afterwards are returning windows, not new
+    /// ones: after an update relaunch the apps finish registering over several seconds, so the first
+    /// sweep can legitimately see only one of them. Treating that first sweep as the whole restore
+    /// pass put every later window on the current desktop.
+    let launchedAt = Date()
+    var inRestoreWindow: Bool { Date().timeIntervalSince(launchedAt) < 20 }
+
     /// `blind` debug command: pretend every app refused to answer until this moment.
     var blindUntil = Date.distantPast
     /// Time of the last Space change. While this is recent, Accessibility answers are unreliable:
@@ -333,6 +340,11 @@ final class Controller: NSObject {
                     if let lost = recentlyLost[hash], Date().timeIntervalSince(lost.at) < lostGrace {
                         win.workspace = lost.workspace
                         recentlyLost[hash] = nil
+                    } else if inRestoreWindow, let remembered = savedWindowWorkspace(for: win) {
+                        // Seen before, by this exact title: it goes home even if it turned up after
+                        // the first sweep. The title-only lookup keeps a genuinely new window of a
+                        // known app where the user is.
+                        win.workspace = remembered
                     } else if !hasCompletedFirstRefresh, let remembered = savedWorkspace(for: win) {
                         win.workspace = remembered
                     }

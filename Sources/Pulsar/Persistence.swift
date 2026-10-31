@@ -21,6 +21,17 @@ extension Controller {
         win.app.bundleIdentifier ?? "unknown"
     }
 
+    /// Where this window belonged last time, by its exact key only.
+    ///
+    /// Used for windows discovered in the settling window after launch. It deliberately does *not*
+    /// fall back to the app's workspace: a brand-new window opened during that window should stay
+    /// where the user is, and only a window we have actually seen before has a real home.
+    func savedWindowWorkspace(for win: Win) -> String? {
+        guard restoreOnLaunch else { return nil }
+        let byTitle = UserDefaults.standard.dictionary(forKey: "windowWorkspaces") as? [String: String]
+        return byTitle?[windowKey(win)]
+    }
+
     /// Where this window belonged last time.
     ///
     /// Window titles drift constantly — a Slack channel, an unread count, a browser tab — so an

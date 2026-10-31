@@ -2,31 +2,31 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CFBundleName</key>
-    <string>Pulsar</string>
-    <key>CFBundleDisplayName</key>
-    <string>Pulsar</string>
-    <key>CFBundleIdentifier</key>
-    <string>com.devansh.pulsar</string>
-    <key>CFBundleExecutable</key>
-    <string>Pulsar</string>
-    <key>CFBundlePackageType</key>
-    <string>APPL</string>
-    <key>CFBundleShortVersionString</key>
-    <string>2.0.6</string>
-    <key>CFBundleVersion</key>
-    <string>23</string>
-    <key>CFBundleIconFile</key>
-    <string>Pulsar</string>
-    <key>LSApplicationCategoryType</key>
-    <string>public.app-category.utilities</string>
-    <key>NSHumanReadableCopyright</key>
-    <string>© 2026 Devansh Goel</string>
-    <key>LSMinimumSystemVersion</key>
-    <string>13.0</string>
-    <key>LSUIElement</key>
-    <true/>
-    <key>NSHighResolutionCapable</key>
-    <true/>
+	<key>CFBundleDisplayName</key>
+	<string>Pulsar</string>
+	<key>CFBundleExecutable</key>
+	<string>Pulsar</string>
+	<key>CFBundleIconFile</key>
+	<string>Pulsar</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.devansh.pulsar</string>
+	<key>CFBundleName</key>
+	<string>Pulsar</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>2.0.7</string>
+	<key>CFBundleVersion</key>
+	<string>24</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.utilities</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>13.0</string>
+	<key>LSUIElement</key>
+	<true/>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSHumanReadableCopyright</key>
+	<string>© 2026 Devansh Goel</string>
 </dict>
 </plist>
