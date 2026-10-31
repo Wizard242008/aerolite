@@ -200,6 +200,18 @@ extension Controller {
         case "probe": parkProbe()
         case "ws":    switchWorkspace(arg)
         case "move":  moveToWorkspace(arg)
+        case "blind":
+            // Simulate an Accessibility outage: every app stops answering for N seconds. This is
+            // what a phone call or a full-screen animation looks like to the scanner, and it is the
+            // regression the placement map has to survive without collapsing onto one workspace.
+            let seconds = Double(arg) ?? 3
+            blindUntil = Date().addingTimeInterval(seconds)
+            log("blind: simulating an AX outage for \(seconds)s")
+            for i in 0..<Int(seconds / 0.3) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + Double(i) * 0.3) { [weak self] in
+                    self?.refresh()
+                }
+            }
         case "focus":
             switch arg {
             case "left": focus(.left); case "right": focus(.right)

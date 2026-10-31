@@ -28,6 +28,19 @@ final class Controller: NSObject {
     /// two, because a Space transition makes every Accessibility query come back empty for a
     /// moment — and treating that as "all windows closed" wiped the entire layout.
     var missedScans: [CFHashCode: Int] = [:]
+
+    /// Where each window was living, kept briefly after we stop tracking it.
+    ///
+    /// A window that goes full screen is dropped deliberately, and comes back as a *new* window
+    /// when the user leaves full screen. A failed sweep can drop one the same way. Without this
+    /// memory the returning window is adopted onto the current workspace — so leaving full screen
+    /// during a call walked every window onto one desktop. Ten minutes is long enough to cover a
+    /// call, short enough that a genuinely new window still lands where the user is.
+    var recentlyLost: [CFHashCode: (workspace: String, at: Date)] = [:]
+    private let lostGrace: TimeInterval = 600
+
+    /// `blind` debug command: pretend every app refused to answer until this moment.
+    var blindUntil = Date.distantPast
     /// Time of the last Space change. While this is recent, Accessibility answers are unreliable:
     /// a full-screen transition makes every app report zero windows, so nothing may be pruned.
     var spaceChangeAt = Date.distantPast
@@ -42,6 +55,14 @@ final class Controller: NSObject {
     private var mouseMonitor: Any?
     private var hoverWork: DispatchWorkItem?
     private var lastHoverHash: CFHashCode?
+
+    /// Hover focus is ignored for a moment after a workspace switch.
+    ///
+    /// Switching lays windows out over ~100 ms, and the pointer is over whatever *was* there. Acting
+    /// on it immediately means a switch can trigger the next switch before the first has settled.
+    private var hoverSuppressedUntil = Date.distantPast
+    /// When the last workspace switch happened, so follow-app can ignore its own echo.
+    private var lastSwitchAt = Date.distantPast
     private var watchWork: DispatchWorkItem?
     /// When on, activating an app (Dock click, Cmd-Tab) jumps to the workspace holding its window.
     var followAppAcrossWorkspaces = true
@@ -270,14 +291,20 @@ final class Controller: NSObject {
             let pid = app.processIdentifier
             if let only, only != pid { continue }
             ensureObserver(for: app)
-            let appWindows = AX.windows(of: pid)
-            if !appWindows.isEmpty { responsive.insert(pid) }
-            for el in appWindows {
+            // nil means the app never answered: a Space transition, a full-screen animation, or a
+            // phone call holding the display. That is not the same as "this app has no windows",
+            // and the two must never be confused — see `windowsAnswered`.
+            let appWindows = Date() < blindUntil ? nil : AX.windowsAnswered(of: pid)
+            if appWindows != nil { responsive.insert(pid) }
+            for el in (appWindows ?? []) {
+                AX.boundMessaging(el)
                 let hash = CFHash(el)
 
                 if AX.isFullScreen(el) {
-                    // out of scope: never tiled, never parked
+                    // out of scope: never tiled, never parked. Remember where it was, so leaving
+                    // full screen puts it back on its own workspace instead of this one.
                     if let tracked = store.byHash[hash] {
+                        recentlyLost[hash] = (tracked.workspace, Date())
                         store.remove(tracked)
                     }
                     continue
@@ -298,7 +325,15 @@ final class Controller: NSObject {
                     // opened later belongs where the user is now. Using the remembered workspace
                     // for both meant a new window appeared on some other desktop — parked, so
                     // opening it looked like nothing happened.
-                    if !hasCompletedFirstRefresh, let remembered = savedWorkspace(for: win) {
+                    //
+                    // A window we dropped moments ago (full screen, a stalled sweep) is the one
+                    // exception: it comes back to its own workspace, not to whichever one happens
+                    // to be current. Without this, exiting full screen during a call gathered
+                    // every window onto a single desktop.
+                    if let lost = recentlyLost[hash], Date().timeIntervalSince(lost.at) < lostGrace {
+                        win.workspace = lost.workspace
+                        recentlyLost[hash] = nil
+                    } else if !hasCompletedFirstRefresh, let remembered = savedWorkspace(for: win) {
                         win.workspace = remembered
                     }
                     if let weight = savedWeight(for: win) { win.weight = weight }
@@ -331,7 +366,19 @@ final class Controller: NSObject {
             parkOtherWorkspaces()
         }
         apply()
-        hasCompletedFirstRefresh = true
+        // Only a sweep that actually saw windows counts as the restore pass. After a restart the
+        // first scan can legitimately come back empty — Accessibility is still warming up, or a
+        // phone call is holding the display. Marking it complete then means every window found a
+        // moment later is treated as newly opened and adopted onto the *current* workspace, which
+        // is how every desktop ended up collapsed onto one.
+        if !store.byHash.isEmpty {
+            hasCompletedFirstRefresh = true
+        } else {
+            log("refresh: empty sweep, still waiting for the restore pass")
+        }
+        if only == nil {
+            recentlyLost = recentlyLost.filter { Date().timeIntervalSince($0.value.at) < lostGrace }
+        }
         scheduleSave()
 
         let trusted = AXIsProcessTrusted()
@@ -351,6 +398,10 @@ final class Controller: NSObject {
     private func pruneResilient(live: Set<CFHashCode>, pid: pid_t?, responsive: Set<pid_t>) {
         var doomed: [Win] = []
         var needsConfirmation = false
+        // Not one app answered. That is the Accessibility system being unavailable — a Space
+        // transition, a full-screen animation, a phone call holding the display — and it is never
+        // evidence that every window closed. Pruning on it is what put every window on one desktop.
+        let blind = responsive.isEmpty
         for (hash, win) in store.byHash {
             if let pid, win.pid != pid { continue }
             if live.contains(hash) {
@@ -375,6 +426,12 @@ final class Controller: NSObject {
                 doomed.append(win)
                 continue
             }
+            if blind {
+                // Keep the window and every bit of its state. A later sweep, taken while
+                // Accessibility is answering again, decides whether it is really gone.
+                needsConfirmation = true
+                continue
+            }
             let misses = (missedScans[hash] ?? 0) + 1
             missedScans[hash] = misses
             if misses >= 2 {
@@ -384,6 +441,7 @@ final class Controller: NSObject {
             }
         }
         for win in doomed {
+            recentlyLost[win.hash] = (win.workspace, Date())
             store.remove(win)
             missedScans[win.hash] = nil
         }
@@ -473,6 +531,11 @@ final class Controller: NSObject {
         guard enabled, followAppAcrossWorkspaces else { return }
         guard app.processIdentifier != getpid() else { return }
 
+        // A switch focuses a window, which activates its app, which posts an activation notification
+        // a moment later. Following that would undo the switch the user just asked for — so an
+        // explicit switch silences follow until the echo has passed.
+        guard Date().timeIntervalSince(lastSwitchAt) > 0.5 else { return }
+
         let appWindows = store.byHash.values.filter { $0.pid == app.processIdentifier }
         log("  app windows: \(appWindows.map { "\($0.workspace)" }.joined(separator: ",")) current=\(store.current)")
         guard !appWindows.isEmpty else { return }        // freshly launched: nothing to follow yet
@@ -488,20 +551,29 @@ final class Controller: NSObject {
         guard let window = target else { return }
         guard window.workspace != store.current else { return }
 
+        // If this app already has a window on the current workspace, there is nothing to follow.
+        //
+        // Without this the app's *other* window could drag the user away from the desktop they are
+        // looking at — and with focus-follows-mouse on, the pointer then immediately pulled focus
+        // back to the app that was still visible here, so the two fed each other: switch, hover,
+        // switch back, at two switches a second until the mouse moved.
+        guard !appWindows.contains(where: { $0.workspace == store.current }) else { return }
+
         switchWorkspace(window.workspace)
         setFocus(window)
     }
 
     // MARK: - quitting
 
-    /// Bring every hidden window back on screen so the Mac is usable once Pulsar is not running.
+    /// Bring every window back on screen, at full size, when Pulsar quits.
     ///
-    /// Placement is saved *before* this runs, so the workspaces are remembered and the next launch
-    /// puts everything back. Windows keep their size; they are only moved into view, cascading so
-    /// they do not sit exactly on top of one another.
+    /// Each window ends up looking the way its own desktop looked — one window, the whole visible
+    /// frame — instead of a cascade of shrinking panes. They therefore sit on top of one another:
+    /// the active app is raised last so it is the one in front, and Cmd-Tab reaches the rest. Sizes
+    /// are never smaller than the screen, so the next launch has no clamped geometry to undo.
     func unparkAll() {
         let visible = axVisibleFrame
-        // Active app last, so it occupies the front slot of the cascade and stays fully visible.
+        // Active app last, so it is raised last and stays in front.
         let windows = Array(store.byHash.values).sorted {
             let left = $0.app.isActive ? 1 : 0
             let right = $1.app.isActive ? 1 : 0
@@ -510,32 +582,15 @@ final class Controller: NSObject {
         }
         guard !windows.isEmpty else { return }
 
-        // A grid cannot be used here: apps have minimum sizes (Hermes refuses under 620 pt tall),
-        // so four panes on a 1019 pt screen would necessarily overlap. Quitting therefore cascades
-        // with a real offset — every window keeps a visible title bar and a usable body, and each
-        // stays fully on screen.
-        // Size the windows so the whole cascade fits: window + cascade span + two margins must
-        // equal the screen, otherwise the last ones clamp to the bottom edge and pile up again.
-        let step: CGFloat = 48
-        let margin: CGFloat = 24
-        let span = step * CGFloat(max(0, windows.count - 1))
-        let base = CGRect(x: visible.minX + margin,
-                          y: visible.minY + margin,
-                          width: visible.width - 2 * margin - span,
-                          height: visible.height - 2 * margin - span)
-        for (index, win) in windows.enumerated() {
-            var frame = base.offsetBy(dx: step * CGFloat(index), dy: step * CGFloat(index))
-            if frame.maxX > visible.maxX { frame.origin.x = visible.maxX - frame.width }
-            if frame.maxY > visible.maxY { frame.origin.y = visible.maxY - frame.height }
-            if frame.minX < visible.minX { frame.origin.x = visible.minX }
-            if frame.minY < visible.minY { frame.origin.y = visible.minY }
-            AX.setFrame(win.el, frame)
-            win.frame = frame
-            // Position alone does not decide stacking: raise each in turn so every cascade step
-            // is actually in front of the one before it, not buried under another app.
+        for win in windows {
+            // Full frame, exactly what a lone window on a workspace gets from the layout.
+            AX.setFrame(win.el, visible)
+            win.frame = visible
+            // Position alone does not decide stacking: raise each in turn so the order above is the
+            // order on screen, rather than whichever app macOS last activated.
             AX.raise(win.el)
         }
-        log("quit: cascaded \(windows.count) windows")
+        log("quit: sized \(windows.count) windows to the full frame")
     }
 
     /// Save placement, then leave the desktop usable. Called from the menu, SIGTERM and terminate.
@@ -637,6 +692,7 @@ final class Controller: NSObject {
 
     private func hoverFocus() {
         guard enabled, focusFollowsMouse else { return }
+        guard Date() >= hoverSuppressedUntil else { return }
         guard NSEvent.pressedMouseButtons == 0 else { return }   // never steal focus mid-drag
         _ = focusWindowUnderCursor()
     }
@@ -666,6 +722,18 @@ final class Controller: NSObject {
 
     private func isParked(_ frame: CGRect, visible: CGRect) -> Bool {
         frame.minY >= visible.maxY - 2 || frame.maxX <= visible.minX + 2
+    }
+
+    /// A frame that differs by a point or less is the same frame.
+    ///
+    /// The screen is 1019 pt tall, so splitting it three ways asks for 339.67 pt and macOS lands on
+    /// 340. Comparing exactly meant every pass rewrote those windows: constant Accessibility traffic,
+    /// visible jitter, and a log full of off-by-one "refusals" that were not refusals at all.
+    private func frameMatches(_ a: CGRect, _ b: CGRect, tolerance: CGFloat = 1) -> Bool {
+        abs(a.minX - b.minX) <= tolerance
+            && abs(a.minY - b.minY) <= tolerance
+            && abs(a.width - b.width) <= tolerance
+            && abs(a.height - b.height) <= tolerance
     }
 
     // MARK: - layout
@@ -725,7 +793,7 @@ final class Controller: NSObject {
             // Defensive: a window may have gone full-screen between refresh and apply.
             if AX.bool(win.el, "AXFullScreen" as CFString) == true { continue }
             let actual = AX.currentFrame(win.el)
-            guard actual != frame else { continue }
+            guard let actual, !frameMatches(actual, frame) else { continue }
 
             AX.setFrame(win.el, frame)
             win.frame = frame
@@ -753,7 +821,7 @@ final class Controller: NSObject {
                     log("min height learned: \(app) = \(Int(after.height)) (cell was \(Int(frame.height)))")
                 }
             }
-            if after != frame && !refusalsLogged.contains(win.hash) {
+            if !frameMatches(after, frame), !refusalsLogged.contains(win.hash) {
                 refusalsLogged.insert(win.hash)
                 let app = win.app.localizedName ?? "?"
                 log("refused geometry: \(app) wanted \(Int(frame.width))x\(Int(frame.height)) "
@@ -866,6 +934,8 @@ final class Controller: NSObject {
             log(String(format: "switch %@ took %.1f ms", name, ms))
         }
         store.current = name
+        hoverSuppressedUntil = Date().addingTimeInterval(0.4)
+        lastSwitchAt = Date()
         saveImmediately()
         // No rescan: the set of windows did not change, only which ones are visible.
         parkOtherWorkspaces()

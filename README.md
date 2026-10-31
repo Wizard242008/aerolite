@@ -124,8 +124,8 @@ window.
 - **Placement survives restarts.** Windows are remembered by app bundle id plus window title, with a
   per-app fallback when the title has changed.
 - **Quitting gives your windows back.** Every hidden window is moved onto the visible screen when
-  Pulsar exits, so the Mac is usable without it — and they return to their workspaces next launch,
-  because placement is saved first.
+  Pulsar exits, each sized to the full frame so it looks the way it did on its own workspace. They
+  return to their workspaces next launch, because placement is saved first.
 
 ## Workspaces
 

@@ -90,7 +90,18 @@ enum AX {
     // MARK: - windows
 
     static func appElement(_ pid: pid_t) -> AXUIElement {
-        AXUIElementCreateApplication(pid)
+        let app = AXUIElementCreateApplication(pid)
+        // A hung app blocks the caller for the default two seconds on every attribute read, and a
+        // sweep touches twenty-odd apps: one unresponsive app made a whole refresh take 3.9 s.
+        // Failing fast is the better trade — a window that cannot answer is left alone and retried
+        // on the next pass, instead of freezing the window manager.
+        AXUIElementSetMessagingTimeout(app, 1.0)
+        return app
+    }
+
+    /// Same bound, applied to an element obtained from another process.
+    static func boundMessaging(_ el: AXUIElement, seconds: Float = 1.0) {
+        AXUIElementSetMessagingTimeout(el, seconds)
     }
 
     /// Standard, visible, resizable-ish windows of one app.
@@ -98,8 +109,20 @@ enum AX {
     /// Filtering happens once per refresh instead of per layout pass, because the only expensive
     /// part is crossing the process boundary — and that we cannot avoid, only amortise.
     static func windows(of pid: pid_t) -> [AXUIElement] {
+        windowsAnswered(of: pid) ?? []
+    }
+
+    /// The same list, but nil when the app never answered.
+    ///
+    /// The difference matters more than it looks. An empty answer from an app that *did* respond
+    /// means its windows are closed. A failed `AXUIElementCopyAttributeValue` means the
+    /// Accessibility system is not answering at all — which is what happens for a moment on every
+    /// Space change, on every full-screen animation, and when a phone call takes over the display.
+    /// Reading that silence as "every window closed" emptied the store, and every window was then
+    /// re-adopted onto whichever workspace was current: all desktops collapsed into one.
+    static func windowsAnswered(of pid: pid_t) -> [AXUIElement]? {
         let app = appElement(pid)
-        guard let raw = elements(app, kAXWindowsAttribute as CFString) else { return [] }
+        guard let raw = elements(app, kAXWindowsAttribute as CFString) else { return nil }
         var out: [AXUIElement] = []
         out.reserveCapacity(raw.count)
         for w in raw {
